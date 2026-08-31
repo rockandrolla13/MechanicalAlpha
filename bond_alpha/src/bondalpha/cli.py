@@ -12,6 +12,7 @@ from typing import Any
 import pandas as pd
 
 from bondalpha import __version__
+from bondalpha.blinded_gate4 import run_strict_blinded_gate4_evaluation
 from bondalpha.config import load_alpha_config
 from bondalpha.datasets import load_public_synthetic
 from bondalpha.features import build_features
@@ -47,6 +48,11 @@ def main(argv: list[str] | None = None) -> int:
     blind.add_argument("--alpha-spec", required=True)
     blind.add_argument("--public-root", required=True)
     blind.add_argument("--output", required=True)
+    blind_gate4 = sub.add_parser("evaluate-gate4")
+    blind_gate4.add_argument("--alpha-spec", required=True)
+    blind_gate4.add_argument("--public-root", required=True)
+    blind_gate4.add_argument("--output-root", default="runs/alpha_gate4")
+    blind_gate4.add_argument("--force", action="store_true")
     unblind = sub.add_parser("unblind")
     unblind.add_argument("--run", required=True)
     unblind.add_argument("--truth-root", required=True)
@@ -89,6 +95,14 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "evaluate-blind":
         result = evaluate_blind(Path(args.alpha_spec), Path(args.public_root), Path(args.output))
         print(f"blind evaluation locked={result['locked']} output={args.output}")
+    elif args.command == "evaluate-gate4":
+        result = run_strict_blinded_gate4_evaluation(
+            Path(args.alpha_spec),
+            Path(args.public_root),
+            output_root=Path(args.output_root),
+            force=args.force,
+        )
+        print(f"blinded gate4 run={result['alpha_gate4_run_id']} decision={result['acceptance']['decision']}")
     elif args.command == "unblind":
         result = unblind_run(Path(args.run), Path(args.truth_root))
         print(f"unblinded matched_truth_rows={result['matched_truth_rows']}")
