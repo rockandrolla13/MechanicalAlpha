@@ -1,0 +1,1 @@
+"""Sparse Hawkes clock modules."""

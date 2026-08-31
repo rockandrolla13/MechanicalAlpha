@@ -1,0 +1,39 @@
+# Python/runtime artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Local virtual environments
+.venv/
+venv/
+env/
+
+# Local orchestration logs/worktrees
+.orch/
+orch/failed/
+
+# Generated data and model artifacts
+bond_alpha/data/processed/
+bond_alpha/data/synthetic/
+bond_alpha/data/synthetic_truth/
+bond_alpha/data/quarantine/
+bond_alpha/data/medium/
+bond_alpha/models/
+bond_alpha/runs/
+bond_alpha/reports/
+
+# Keep hand-written/generated docs that are safe to version.
+!bond_alpha/data/SYNTHETIC_TRUTH.md
+
+# Local secrets and machine config
+.env
+.env.*
+*.pem
+*.key
+*.token
+secrets/

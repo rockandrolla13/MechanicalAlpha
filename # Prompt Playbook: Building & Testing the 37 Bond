@@ -1,0 +1,124 @@
+# Prompt Playbook: Building & Testing the 37 Bond Alpha Factors
+
+Copy-paste prompts, in dependency order. Each prompt is self-contained but assumes the artifacts of earlier prompts exist. Attach `bond_alpha_factors.md` (or the PDF) to every session so the factor definitions F1–F37 and Algorithms 1–8 are in context.
+
+Conventions used below:
+- **[DATA]** = your data root, **[UNIVERSE]** = your bond universe filter (e.g. USD IG, >$250m outstanding).
+- Every code prompt ends with the same three demands: unit tests, a smoke run on a small sample, and a written list of assumptions the code made. Keep those in — they catch most silent errors.
+- Run Phase 0 once; Phases 1–3 are per-family; Phase 4–5 once.
+
+---
+
+## Phase 0 — Environment and data
+
+### P0.1 — Project scaffold
+> Create a Python project `bond_alpha` for computing and testing corporate-bond alpha factors. Structure: `data/` (raw, clean, bars), `factors/` (one module per family), `estimation/` (fitted models), `evaluation/`, `tests/`, `config.yaml`. Use pandas + numpy + scipy + statsmodels + scikit-learn only; polars optional for the tape. Write `config.yaml` with: universe filters [UNIVERSE], clock definitions (time/volume/transaction), nested horizon grids {1, 5, 21, 63} trading days, half-life grid {1, 5, 21} days, evaluation horizons {1, 5, 21} days, and bucket definitions (rating × maturity-bucket × sector). Add a `Makefile` with targets: clean-data, bars, factors, evaluate. Write the scaffold, a README describing the pipeline DAG, and nothing else yet.
+
+### P0.2 — Data acquisition
+> I need a corporate-bond trade tape and reference data. Write `data/acquire.py` with three interchangeable loaders behind one interface `load_tape(source) -> DataFrame[cusip, ts, price, par_volume, side_flag, contra_party_type]`:
+> 1. **WRDS TRACE Enhanced** (if I have WRDS credentials): SQL pull for [UNIVERSE], joined to Mergent FISD for amount outstanding, rating, maturity, sector.
+> 2. **FINRA public TRACE** (no WRDS): document exactly what is and isn't available (dissemination caps at 5MM+/1MM+, no uncapped size) and load it.
+> 3. **Synthetic generator** for end-to-end testing without any subscription: simulate 500 bonds over 3 years as marked point processes — Hawkes buy/sell arrivals with cross-excitation, prices = issuer-curve fair value + OU pressure component + impact from signed prints + noise, side flags, occasional interdealer prints. Parameterize so median bond trades ~2×/day and the 10th percentile ~2×/week.
+> The synthetic generator must plant known effects (reversal after high-volume prints, sign persistence, liquid→illiquid lead-lag within issuer) so later factor tests have positive controls. Document the planted effects and their magnitudes in `data/SYNTHETIC_TRUTH.md`.
+
+### P0.3 — TRACE cleaning
+> Implement the standard TRACE Enhanced cleaning pipeline in `data/clean.py` (Dick-Nielsen style): drop cancellations and corrections by matching message sequence, reverse reversals, de-duplicate agency cross-reports and inter-dealer double counting, filter obvious price errors (median ± threshold filter and reversal filter), and normalize sides into d ∈ {+1 customer buy, −1 customer sell, 0 interdealer}. Log counts removed at each step. Unit-test each rule with hand-built message sequences. Output one parquet per month: `clean/tape_YYYYMM.parquet`.
+
+### P0.4 — Buckets and universe
+> Write `data/universe.py`: join the clean tape to reference data; construct liquidity buckets (trailing 63-day print count terciles), rating × maturity × sector buckets for cross-sectional ranking, and an issuer-curve map with the most liquid sibling per issuer (anchor bond = max trailing print count). Recompute monthly. Output `clean/universe_YYYYMM.parquet` and `clean/issuer_anchors_YYYYMM.parquet`.
+
+### P0.5 — Clocks, bars, fallback windows (Algorithm 1)
+> Implement Algorithm 1 from the compendium in `data/bars.py`. One function `make_bars(tape, clock, grid)` supporting time, volume, and transaction clocks; for each observation timestamp and each nested horizon δ ∈ {1, 5, 21, 63} days, aggregate prints with the fallback rule (shortest non-empty window; mark missing only if full history is empty), and record the **realized horizon** as a column (it is itself a staleness feature). Per bar and per side (+/−/all): count, volume, VWAP, first, last, min, max, std of prints. Property-test: bars from a permuted-order tape are identical after sorting; fallback never returns an empty window when history is non-empty.
+
+### P0.6 — Fair-value engine (F15–F17)
+> Implement `factors/fair_value.py` computing, per bond-day and per nested window with fallback: trade-price percentiles p ∈ {10,25,45,50,55,75,90} (F15), rolling min/max and range R (F16), VWAP/first/last per side (F17), and the derived series: robust fair value FV = Q50, reversal deviation (P_last − FV)/FV, dispersion Q75 − Q25, and range proxy vol R/Q50. Validate on synthetic data: FV must track the planted issuer-curve fair value with lower RMSE than last-print.
+
+---
+
+## Phase 1 — Tape-only factors (no model fitting)
+
+Each prompt: implement, unit-test against hand-computed toy examples, then smoke-run on one liquid and one illiquid synthetic bond and plot the factor path.
+
+### P1.1 — Signed-flow family (F1, F2, F3, F5)
+> Using the compendium definitions, implement in `factors/flow.py`: F1 last-trade sign with time-since-trade attached; F2 signed-spread interaction in both forms (use realized effective spread from F22 as the spread proxy when quotes are absent); F3 exponentially decayed signed flow F_t(β) for the half-life grid {1,5,21}d, normalized by amount outstanding — implement the O(1) recursive update F ← F·exp(−βΔt) + d·V/AmtOut, not a rolling sum; F5 per-side VWAPs, their gap G_t, and volume pressure Π_t. Hand-check: a tape of 3 prints with known times must reproduce F3 to 1e-12 against the closed form.
+
+### P1.2 — Reversal / pressure family (F9, F10, F11, F12, F14)
+> Implement `factors/reversal.py`: F9 EMA- and VWAP-deviation reversal; F10 volume-conditioned reversal (both forms; CsRank strictly within rating×maturity×sector buckets from P0.4); F11 range position K_t(n) and its rank-fade; F12 the IfElse dislocation switch with threshold c set to 0.5 × trailing median effective spread; F14 all three price–volume divergence forms. All ranks must handle ties and missing bonds gracefully (rank among non-missing, propagate NaN otherwise). Positive control: on synthetic data, F10 must show a significantly positive 5-day IC because reversal-after-volume is planted.
+
+### P1.3 — Liquidity family (F19, F20, F21, F22, F24)
+> Implement `factors/liquidity.py`: F19 Amihud on daily aggregates; F20 resilience delta exactly as specified (guard ε in the denominator); F21 amount efficiency + velocity + acceleration on turnover = volume/AmtOut; F22 realized effective spread from F5's per-side VWAPs at δ ∈ {5, 21} days; F24 quote-update intensity IF quote data exists, else emit NaN with a logged warning, never zeros. Then orthogonalize F21 against F19 cross-sectionally (residual of bucket-wise regression) and store both raw and orthogonalized versions.
+
+### P1.4 — Momentum family (F25, F26, F27)
+> Implement `factors/momentum.py`: F25 studentized momentum on both price and (if OAS available) spread changes; F26 trend-reliability — rolling OLS of log price on time per bond over 21/63-day windows, output sgn(slope)·R² and the double-rank form; F27 both lead–lag rank forms using first/last prints per bar from P0.5. Efficiency requirement: the rolling regressions must be vectorized (running sums for slope and R², no per-window OLS refits). Cross-check the running-sum R² against statsmodels on 100 random windows.
+
+### P1.5 — Volatility family (F28, F29, F30)
+> Implement `factors/volatility.py`: F28 realized vol (with the range-based fallback R/Q50 from P0.6 when there are <5 prints in the window), the inverse-vol tilt, and vol-amplified reversal; F29 vol-of-vol; F30 rolling skew/kurt on 63-day windows with shrinkage toward the bucket mean (shrinkage weight ∝ n/(n+n₀), pick n₀=60), plus the kurtosis regime switch. Document in comments why raw 21-day skew on a sparse tape is unusable (show the standard error).
+
+### P1.6 — Composite mined expressions (§12)
+> Implement the six translated mined expressions X(1)…X(6) from §12 of the compendium in `factors/mined.py`, reusing K_t, R_t, VWAP deviation, and rank utilities from earlier modules — no duplicated logic. Add a redundancy check: report the pairwise Spearman correlation of X(1)…X(6) with the Phase-1 factors they were derived from, and flag any pair >0.9 as expected-duplicate.
+
+---
+
+## Phase 2 — Quote-dependent factors (skip or proxy if no quote/axe data)
+
+### P2.1 — Imbalance family (F6, F7, F8)
+> I have [describe: composite quotes / dealer axes / nothing]. Implement `factors/imbalance.py`: F6 best-quote imbalance with an OU fit (estimate γ by AR(1) on the imbalance series; report the half-life log2/γ and refuse to emit the factor at horizons > 3 half-lives); F7 the OBP grid with dealers-as-levels, lookbacks {1,5,21}d, emitted as a feature vector not a scalar; F8 OFI on composite quote revisions, event-clocked. If I said "nothing": implement the trade-based proxies the compendium specifies (axe-count imbalance → Π_t from F5; OFI → skip with NaN) and mark proxy columns with a `_proxy` suffix.
+
+---
+
+## Phase 3 — Estimated factors (models fitted, strictly walk-forward)
+
+### P3.1 — Hawkes states (F4)
+> Implement `estimation/hawkes.py`: fit univariate exponential Hawkes (μ, α, β) per flow type (customer buy / customer sell) by MLE, pooled within liquidity bucket per Algorithm 2's pooling logic — parameters per bucket, states per bond. Use the standard recursive log-likelihood; verify the estimator on simulated Hawkes data (recover parameters within 10% at n=5000 events). Then emit F4 states H_i(t) = log(μ + decayed sum) per bond, computed with the same O(1) recursion as F3. Refit quarterly, walk-forward only.
+
+### P3.2 — Impact state (F13, Algorithm 2)
+> Implement Algorithm 2 steps 3–4 in `estimation/impact.py`: for each liquidity bucket, regress future h-day returns (h ∈ {1,5,21}) on F_t(β) for each β in the half-life grid, all walk-forward with an expanding window and a 21-day embargo; select β by out-of-sample R²; back out λ from the slope rescaled by (1−e^{−βh}); emit F13 = −λ·F_t(β*) and the de-pressured price. Report the selected half-life per bucket — on synthetic data it must approximately recover the planted impact decay.
+
+### P3.3 — Toxicity propensity (F31, F32, F34, Algorithm 3)
+> Implement Algorithm 3 in `estimation/toxicity.py`. Markout horizon G ∈ {1, 5} days against the F15 fair value, threshold c = 0.5 × trailing effective spread. Feature grid exactly as F31 specifies: the eight statistics × three clocks × nested horizons, level features, signed-log transforms; since public TRACE has no client IDs, substitute trade-size buckets and side-persistence features and note this. Classifier: gradient boosting with isotonic calibration, walk-forward with embargo ≥ G. Emit: per-print propensity, F31 toxicity-weighted signed flow over trailing {5,21}d, and F34's informed/uninformed decomposition Q^I, Q^U with their rank factors. Evaluate the classifier itself first (AUC, calibration curve, feature importance by clock) before building the factors.
+
+### P3.4 — VPIN (F33)
+> Implement `factors/vpin.py`: volume buckets of size V* = 1/50 of trailing 21-day volume per bond, VPIN over N=50 buckets, using TRACE side flags directly (no bulk classification needed). Then test its designed role: does high VPIN predict (a) next-period realized vol and (b) the *conditional profitability of F10* (interaction regression), rather than direction? Report both.
+
+### P3.5 — Intensity ratios (F35, F36, Algorithm 4)
+> Implement Algorithm 4 in `estimation/intensity_ratio.py`: logistic regression of next-event side on covariates {Π_t, F1, F2 (both forms), F4 states, F3 fast} sampled at event times, pooled within buckets, walk-forward. Model selection by BIC over the covariate power set up to size 5 (or L1 path if that's cleaner) — report which sets win and check the compendium's two predictions: imbalance-alone loses; the s·ε interaction survives. Emit F35 = 2p̂−1 continuously. Then F36: second-stage logistic for aggressiveness (print at/through the far composite quote if quotes exist; else within the top/bottom decile of the day's print range as proxy) and the combined directional factor.
+
+### P3.6 — State-conditional tables (F23, F37, Algorithm 6)
+> Implement Algorithm 6 in `estimation/state_tables.py`: state = (effective-spread tercile, log-staleness bucket ×4, last-flow sign), pooled within liquidity buckets; accumulate the four conditional estimates in one pass with running sums; k-NN smoothing over adjacent cells with opposite-sign cells infinitely distant; two-stage prediction output. Also emit F23 = Ê[τ|S] as a standalone factor and as the tradability gate: a boolean `tradable_h` per bond-day-horizon, h < Ê[τ|S] ⇒ False. Minimum cell count 200; report the fraction of state space that meets it.
+
+### P3.7 — Sparse fair-value selection (Algorithm 5)
+> Implement Algorithm 5 in `estimation/fv_selection.py`: the full grid from P0.6 (a few hundred candidates, per side, per horizon, with realized-horizon columns), standardized within date×bucket; LASSO of h-day forward returns with penalty by walk-forward validation; importance = summed |coef| grouped by (feature type, horizon, side). Deliverable: a table + bar chart of grouped importance. Test the compendium's prior: percentiles/min/max at medium horizons should dominate and volume features should drop — flag if they don't and investigate before proceeding.
+
+---
+
+## Phase 4 — Evaluation harness
+
+### P4.1 — Single-factor evaluation
+> Write `evaluation/single.py`: for every factor column produced in Phases 1–3, compute per-date bucket-neutral Spearman rank-IC against forward returns at h ∈ {1,5,21}d, restricted to `tradable_h` bond-days from P3.6. Report: mean IC, IC t-stat (Newey–West, lag = h), IC decay profile across h, monotonicity of decile portfolio returns, factor autocorrelation (turnover proxy), and a cost-adjusted decile spread using half of F22 as the per-trade haircut. Output one summary parquet + a one-page PDF per factor family. On synthetic data: planted factors (F10, F13, F35) must pass; a placebo (shuffled-date factor) must fail — build both checks into the harness as assertions.
+
+### P4.2 — Redundancy and clustering
+> Write `evaluation/redundancy.py`: pairwise rank correlations of all factors, hierarchical clustering, and a cluster-representative table. The compendium predicts the factors collapse to roughly one representative per section (≈11 families) — report the actual cluster count at correlation threshold 0.7 and which factors are pure duplicates.
+
+### P4.3 — Pool combination (Algorithm 7)
+> Implement Algorithm 7 in `evaluation/pool.py`: greedy admission — candidates ordered by single-factor |IC t-stat|; tentatively add, re-optimize linear weights to maximize combined rank-IC (ridge on rank-transformed factors is fine), admit only if pool IC improves AND max pairwise correlation with incumbents < 0.7; prune pass after every 5 admissions; weights frozen and refit quarterly, everything walk-forward. Report the admission order, final pool, and the pool-vs-best-single IC comparison.
+
+### P4.4 — Liquid→illiquid transfer (Algorithm 8)
+> Implement Algorithm 8 in `evaluation/transfer.py`: propagate the final pool's anchor-bond scores to illiquid siblings (with maturity-gap decay, test decay half-lives {1, 3, ∞} years of gap), plus the anchor-implied basis factor. Evaluate on illiquid-tercile bonds only. Then run the reverse direction (illiquid-fitted models on liquid bonds) purely as the falsification test — the compendium predicts it fails; report both directions side by side.
+
+---
+
+## Phase 5 — Wrap-up
+
+### P5.1 — Reproducibility audit
+> Audit the whole pipeline for lookahead: list every place a factor at time t could touch data after t (label construction, normalizations fitted on full sample, bucket definitions, rank pools, model refits) and either prove each is walk-forward or fix it. Then produce `REPORT.md`: per-family results table, the pool composition, the transfer-test result, and the synthetic-data positive/placebo control outcomes.
+
+### P5.2 — Real-data rerun (when subscriptions available)
+> Swap the loader from synthetic to WRDS data from MarketDB (P0.2 option 1), rerun `make clean-data bars factors evaluate` end-to-end, and produce a diff report: which factors that worked on synthetic data survive on real data at |IC t| > 2, which die, and whether the F10 / F13 / F25 family — the ones with documented real-world credit evidence — behave as the literature predicts.
+
+---
+
+## Order of execution (dependency DAG)
+
+P0.1 → P0.2 → P0.3 → P0.4 → P0.5 → P0.6 → {P1.1–P1.6, P2.1 in any order} → P3.1 → P3.2 (needs P1.1) → P3.3 → P3.4 → P3.5 (needs P1.1, P2.1/proxies, P3.1) → P3.6 → P3.7 → P4.1 → P4.2 → P4.3 → P4.4 → P5.1 → P5.2
+
+Total: 24 prompts. The synthetic generator (P0.2 option 3) is what makes the whole sequence testable today, before any data subscription: every later prompt's acceptance check refers back to the planted effects in `SYNTHETIC_TRUTH.md`.

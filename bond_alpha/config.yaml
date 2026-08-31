@@ -1,0 +1,59 @@
+universe_filters:
+  source: UNIVERSE
+  include:
+    ratings: UNIVERSE
+    sectors: UNIVERSE
+    currencies: UNIVERSE
+    maturity_years: UNIVERSE
+    minimum_issue_size: UNIVERSE
+    minimum_liquidity: UNIVERSE
+  exclude:
+    defaulted: true
+    distressed: UNIVERSE
+    private_placements: UNIVERSE
+
+clock_definitions:
+  time:
+    enabled: true
+    bar_sizes:
+      - 1d
+  volume:
+    enabled: true
+    target_volume: UNIVERSE
+  transaction:
+    enabled: true
+    trades_per_bar: UNIVERSE
+
+horizon_grids:
+  trading_days:
+    - 1
+    - 5
+    - 21
+    - 63
+
+half_life_grid_days:
+  - 1
+  - 5
+  - 21
+
+evaluation_horizons_days:
+  - 1
+  - 5
+  - 21
+
+buckets:
+  rating:
+    - investment_grade
+    - high_yield
+    - unrated
+  maturity_bucket:
+    - short
+    - intermediate
+    - long
+  sector:
+    source: UNIVERSE
+  cross:
+    - rating
+    - maturity_bucket
+    - sector
+

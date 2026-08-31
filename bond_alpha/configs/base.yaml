@@ -1,0 +1,136 @@
+project:
+  name: corporate_bond_synthetic_market
+  master_seed: 20260830
+  timezone: UTC
+  session_open: "09:30:00"
+  session_close: "16:00:00"
+
+paths:
+  data_root: ${BONDSIM_DATA_ROOT:-data/raw}
+  processed_root: data/processed
+  model_root: models
+  synthetic_root: data/synthetic
+  truth_root: data/synthetic_truth
+  report_root: reports
+
+columns:
+  timestamp: auto
+  bond_id: auto
+  issuer_id: auto
+  side: auto
+  price: auto
+  notional: auto
+  is_interdealer: auto
+  trade_type: auto
+  venue: auto
+  bid: auto
+  ask: auto
+  mid: auto
+  fair_value: auto
+  yield: auto
+  oas: auto
+  duration: auto
+  convexity: auto
+  maturity: auto
+  rating: auto
+  sector: auto
+
+split:
+  train_fraction: 0.70
+  validation_fraction: 0.15
+  test_fraction: 0.15
+  minimum_test_sessions: 60
+
+universe:
+  n_bonds: 500
+  target_issuers: 100
+  minimum_issuers_with_three_bonds: 70
+
+liquidity:
+  target_median_events_per_day: 2.0
+  target_p10_events_per_day: 0.4
+  maximum_events_per_day: 25.0
+  pilot_sessions: 60
+  calibration_iterations: 4
+  calibration_damping: 0.5
+
+hawkes:
+  decay_half_lives_minutes: [5, 30, 120]
+  maximum_spectral_radius: 0.85
+  controlled_target_spectral_radius: 0.70
+  reset_excitation_at_session_close: true
+  likelihood_l2_penalty: 0.001
+  use_likelihood_refinement: false
+
+activity:
+  intraday_bucket_minutes: 30
+  daily_model: block_bootstrap
+  block_length_sessions: 5
+  include_sector_factors: false
+
+marks:
+  synthcity_candidates: [arf, tvae, ctgan]
+  quick_candidates: [arf]
+  large_print_quantile: 0.90
+  tail_model_threshold_quantile: 0.95
+  minimum_stratum_rows: 100
+  pre_generated_pool_size: 5000
+  maximum_generation_retries: 5
+  empirical_fallback: true
+  prohibit_raw_identifiers: true
+  prohibit_future_features: true
+
+prices:
+  fair_value_route: transaction_price_proxy
+  ou_min_half_life_days: 0.25
+  ou_max_half_life_days: 20.0
+  innovation_distribution: empirical
+  use_duration_convexity_when_available: false
+  factor_bootstrap_block_sessions: 5
+
+positive_controls:
+  large_print_reversal:
+    enabled: true
+    threshold_quantile: 0.90
+    default_amplitude_price_points: 0.08
+    data_scaled_volatility_multiple: 0.40
+    minimum_amplitude_price_points: 0.03
+    maximum_amplitude_price_points: 0.12
+    half_life_days: 0.50
+  sign_persistence:
+    enabled: true
+    preserve_total_own_excitation: true
+    minimum_same_side_mass: 0.15
+    maximum_same_side_mass: 0.30
+    minimum_same_minus_opposite_mass: 0.10
+  leader_follower:
+    enabled: true
+    leader_definition: highest_target_activity_within_issuer
+    follower_definition: bottom_three_activity_ranks
+    fast_time_constant_minutes: 30
+    slow_time_constant_days: 1.50
+    default_peak_price_points: 0.05
+    data_scaled_volatility_multiple: 0.35
+    minimum_peak_price_points: 0.03
+    maximum_peak_price_points: 0.10
+    reverse_effect_price_points: 0.0
+    cross_issuer_effect_price_points: 0.0
+
+simulation:
+  n_sessions: 756
+  smoke_bonds: 10
+  smoke_sessions: 20
+  medium_bonds: 100
+  medium_sessions: 100
+  output_partition_columns: [scenario, year, month]
+  parquet_compression: zstd
+  stream_by_session: true
+  max_events_per_session_safety: 100000
+
+validation:
+  recovery_seeds: 5
+  relative_effect_tolerance: 0.25
+  null_fraction_of_controlled_max: 0.20
+  holm_alpha: 0.05
+  liquidity_median_range: [1.90, 2.10]
+  liquidity_p10_range: [0.36, 0.44]

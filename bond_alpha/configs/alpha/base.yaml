@@ -1,0 +1,26 @@
+project: alpha_factory_v1
+
+paths:
+  gate3_public_root: data/medium
+  run_root: runs/alpha
+  frozen_root: models/alpha_frozen
+  report_root: reports/alpha
+
+model:
+  horizons: [30m, 2h, 1d, 5d]
+  train_fraction: 0.70
+  validation_fraction: 0.15
+  cost_hurdle: 0.03
+  random_seed: 20260830
+
+features:
+  - large_print_reversal
+  - flow_persistence
+  - issuer_leadlag
+  - relative_value
+  - composite
+
+forbidden_columns:
+  - truth
+  - latent_
+  - planted_

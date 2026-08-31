@@ -1,0 +1,179 @@
+gates:
+- metric: no leakage
+  split: train_validation
+  comparison: equals
+  threshold: true
+  severity: fatal
+  rationale: test split excluded from fitted artifacts
+  status: pass
+  observed_value: true
+- metric: valid public schema
+  split: synthetic
+  comparison: superset
+  threshold:
+  - event_id
+  - timestamp_utc
+  - session_date
+  - synthetic_bond_id
+  - synthetic_issuer_id
+  - side
+  - notional
+  - price
+  - is_interdealer
+  - trade_type
+  - venue_bucket
+  - reporting_delay_ms
+  - currency
+  severity: fatal
+  rationale: public columns conform to contract
+  status: pass
+  observed_value: true
+- metric: valid truth schema
+  split: truth
+  comparison: superset
+  threshold:
+  - event_id
+  - scenario
+  - timestamp_utc
+  - session_date
+  - latent_fair_value
+  - ou_pressure
+  - permanent_impact_state
+  - ordinary_temporary_impact_state
+  - planted_large_print_state
+  - planted_leadlag_state
+  - latent_mid_without_planted_effects
+  - latent_mid_with_planted_effects
+  - transaction_concession
+  - observation_noise
+  - hawkes_cluster_id
+  - hawkes_parent_event_id
+  - hawkes_generation
+  - hawkes_edge_class
+  - is_immigrant
+  - large_print_threshold
+  - is_large_print
+  - source_leader_event_id
+  - planted_effect_ids
+  severity: fatal
+  rationale: truth columns conform to contract
+  status: pass
+  observed_value: true
+- metric: public/truth physical separation
+  split: synthetic
+  comparison: equals
+  threshold: true
+  severity: fatal
+  rationale: public and truth roots differ
+  status: pass
+  observed_value: true
+- metric: same-seed simulation content-hash equality
+  split: reproduction
+  comparison: equals
+  threshold: true
+  severity: fatal
+  rationale: canonical public and truth hashes match
+  status: pass
+  observed_value: true
+- metric: same-seed metric equality
+  split: reproduction
+  comparison: equals
+  threshold: true
+  severity: fatal
+  rationale: metric table hashes match
+  status: pass
+  observed_value: true
+- metric: Hawkes stability
+  split: calibration
+  comparison: <
+  threshold: 0.85
+  severity: fatal
+  rationale: spectral radius below configured maximum
+  status: pass
+  observed_value: 0.25000000026199865
+- metric: positive immigrant baselines
+  split: calibration
+  comparison: '>'
+  threshold: 0.0
+  severity: fatal
+  rationale: baseline intensities are positive by construction
+  status: pass
+  observed_value: true
+- metric: no out-of-session events
+  split: synthetic
+  comparison: equals
+  threshold: true
+  severity: fatal
+  rationale: session calendar creates business sessions
+  status: pass
+  observed_value: true
+- metric: no invalid sides
+  split: synthetic
+  comparison: subset
+  threshold:
+  - -1
+  - 1
+  severity: fatal
+  rationale: simulator only emits -1/+1 sides
+  status: pass
+  observed_value: true
+- metric: no nonpositive notionals
+  split: synthetic
+  comparison: '>'
+  threshold: 0.0
+  severity: fatal
+  rationale: empirical sampler rejects negative sizes through source filter
+  status: pass
+  observed_value: true
+- metric: no invalid prices
+  split: synthetic
+  comparison: '>'
+  threshold: 0.0
+  severity: fatal
+  rationale: validation checked positive finite prices
+  status: pass
+  observed_value: true
+- metric: price accounting identity
+  split: truth
+  comparison: equals
+  threshold: true
+  severity: fatal
+  rationale: truth ledger component identity
+  status: pass
+  observed_value: true
+- metric: model serialization and reload
+  split: validation
+  comparison: equals
+  threshold: true
+  severity: fatal
+  rationale: selected mark model record can be reloaded
+  status: pass
+  observed_value: true
+- metric: median liquidity target
+  split: validation
+  comparison: range
+  threshold:
+  - 1.9
+  - 2.1
+  severity: fatal
+  rationale: median event rate target
+  status: pass
+  observed_value: 1.9416666666666667
+- metric: p10 liquidity target
+  split: validation
+  comparison: range
+  threshold:
+  - 0.36
+  - 0.44
+  severity: fatal
+  rationale: p10 event rate target
+  status: pass
+  observed_value: 0.42833333333333334
+- metric: SynthCity fallback baseline
+  split: validation
+  comparison: not inferior
+  threshold: empirical_fallback
+  severity: informational
+  rationale: fallback selected when SynthCity registry is unavailable
+  status: pass
+  observed_value: true

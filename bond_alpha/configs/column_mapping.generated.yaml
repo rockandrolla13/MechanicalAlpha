@@ -1,0 +1,22 @@
+source: marketdb.trace
+columns:
+  timestamp: trd_exctn_ts
+  bond_id: cusip
+  issuer_id: company_symbol
+  side: rpt_side_cd
+  price: rptd_pr
+  notional: entrd_vol_qt
+  is_interdealer: cntra_mp_id
+  trade_type: cntra_mp_id
+  venue: null
+  bid: null
+  ask: null
+  mid: null
+  fair_value: null
+  yield: yld_pt
+  oas: null
+  duration: null
+  convexity: null
+  maturity: null
+  rating: null
+  sector: null

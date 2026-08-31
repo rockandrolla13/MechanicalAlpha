@@ -1,0 +1,61 @@
+horizons:
+  - 30m
+  - 2h
+  - 1bd
+  - 5bd
+
+side_convention:
+  canonical: customer_perspective
+  customer_buy: 1
+  customer_sell: -1
+  dealer_inventory_change: "-customer_side * executed_notional"
+  trace_side_policy: "TRACE side must be observed from a documented source or separately validated before signed labels are used."
+
+point_in_time:
+  current_value_rule:
+    effective_time: "<= prediction_timestamp"
+    publication_time: "<= prediction_timestamp"
+    revision_time: "<= prediction_timestamp"
+  future_value_rule:
+    effective_time: "<= horizon_end"
+    publication_time: "<= horizon_end"
+    revision_time: "<= horizon_end"
+  missing_future_policy: censored
+  stale_future_policy: censored
+  max_future_fair_value_staleness: 2D
+
+meaningful_move:
+  30m:
+    absolute_price_cents: 5.0
+    spread_fraction: null
+    volatility_units: null
+  2h:
+    absolute_price_cents: 7.5
+    spread_fraction: null
+    volatility_units: null
+  1bd:
+    absolute_price_cents: 10.0
+    spread_fraction: null
+    volatility_units: null
+  5bd:
+    absolute_price_cents: 20.0
+    spread_fraction: null
+    volatility_units: null
+
+aggressive_hurdle:
+  30m: 0.05
+  2h: 0.075
+  1bd: 0.10
+  5bd: 0.20
+
+toxicity_cost_hurdle:
+  30m: 0.0
+  2h: 0.0
+  1bd: 0.0
+  5bd: 0.0
+
+coverage_groups:
+  - bond_id
+  - issuer_id
+  - rating
+  - liquidity_bucket

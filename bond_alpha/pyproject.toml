@@ -1,0 +1,40 @@
+[project]
+name = "bond-alpha"
+version = "0.1.0"
+description = "Corporate-bond alpha factor computation and evaluation scaffold."
+requires-python = ">=3.11"
+dependencies = [
+  "duckdb",
+  "matplotlib",
+  "numpy",
+  "pandas",
+  "polars",
+  "pyarrow",
+  "pydantic",
+  "PyYAML",
+  "seaborn",
+  "scipy",
+  "scikit-learn",
+  "statsmodels",
+]
+
+[project.scripts]
+mechanical-alpha = "mechanical_alpha.cli:main"
+bondsim = "bondsim.cli:main"
+bondalpha = "bondalpha.cli:main"
+
+[project.optional-dependencies]
+tape = [
+  "polars",
+]
+dev = [
+  "pytest",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+
+[tool.setuptools.packages.find]
+where = ["src", "."]
+include = ["bondsim*", "bond_alpha*", "mechanical_alpha*", "bondalpha*"]

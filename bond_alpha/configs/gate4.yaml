@@ -1,0 +1,26 @@
+inherits: base.yaml
+scenario: controlled_all
+frozen_calibration_id: calibration-v1.0.0
+
+paths:
+  processed_root: data/processed
+  model_root: models
+  synthetic_root: data/synthetic
+  truth_root: data/synthetic_truth
+  report_root: reports
+
+universe:
+  n_bonds: 500
+  target_issuers: 100
+  minimum_issuers_with_three_bonds: 70
+
+simulation:
+  n_sessions: 756
+  smoke_bonds: 10
+  smoke_sessions: 20
+  medium_bonds: 100
+  medium_sessions: 100
+  output_partition_columns: [scenario, year, month]
+  parquet_compression: zstd
+  stream_by_session: true
+  max_events_per_session_safety: 100000

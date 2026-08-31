@@ -1,0 +1,85 @@
+version: 1
+description: Generic point-in-time model definitions for event and toxicity tasks.
+
+split:
+  train_fraction: 0.70
+  validation_fraction: 0.15
+  test_fraction: 0.15
+  policy: time_ordered_only
+
+point_in_time:
+  reject_future_feature_timestamps: true
+  require_label_time_after_prediction_time: true
+  client_identity_allowed: false
+  rfq_responder_integration: false
+
+benchmarks:
+  - benchmark_unconditional
+  - benchmark_last_side
+  - benchmark_imbalance
+
+estimators:
+  logistic_l2:
+    type: sklearn.linear_model.LogisticRegression
+    penalty: l2
+    solver: lbfgs
+    max_iter: 1000
+  gradient_boosting:
+    type: sklearn.ensemble.GradientBoostingClassifier
+    max_depth: 2
+
+metrics:
+  - log_loss
+  - brier_score
+  - roc_auc
+  - pr_auc
+  - calibration_intercept
+  - calibration_slope
+  - expected_calibration_error
+  - confusion_matrix
+  - decile_performance
+
+tasks:
+  next_rfq_inquiry_side:
+    family: next_side
+    target: next_rfq_inquiry_customer_buy
+    primary_model: logistic_l2
+    required_benchmarks:
+      - benchmark_unconditional
+      - benchmark_last_side
+      - benchmark_imbalance
+
+  next_firm_up_side:
+    family: next_side
+    target: next_firm_up_customer_buy
+    primary_model: logistic_l2
+
+  next_executed_rfq_side:
+    family: next_side
+    target: next_executed_rfq_customer_buy
+    primary_model: logistic_l2
+
+  next_trace_side:
+    family: next_side
+    target: next_trace_customer_buy
+    caveat: TRACE side must be observed or separately validated before this task is enabled.
+    primary_model: logistic_l2
+
+  marked_aggressiveness:
+    family: aggressiveness
+    target: aggressive_or_price_moving_event
+    primary_model: logistic_l2
+    challengers:
+      - gradient_boosting
+
+  first_fair_value_move:
+    family: first_move
+    target: first_meaningful_fair_value_move_up
+    primary_model: logistic_l2
+
+  anonymous_toxicity:
+    family: toxicity
+    target: dealer_toxic_trade
+    primary_model: logistic_l2
+    challengers:
+      - gradient_boosting

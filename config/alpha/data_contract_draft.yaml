@@ -1,0 +1,237 @@
+version: 0.1.0
+status: draft_audit_only
+created: 2026-08-30
+
+principles:
+  as_of_required: true
+  no_client_identity_assumed: true
+  no_raw_identifier_publication: true
+  do_not_invent_missing_fields: true
+
+canonical_conventions:
+  project_side_convention:
+    definition: dealer_perspective
+    buy_sell_mapping:
+      client_sells_to_dealer: 1
+      client_buys_from_dealer: -1
+    status: required_by_repo_instructions
+  trace_side_convention:
+    source_field: marketdb.trace.rpt_side_cd
+    observed_values: [B, S]
+    current_mapping_in_bondsim:
+      B: 1
+      S: -1
+    semantic_confidence: medium
+    blocker: validate whether B/S is customer, dealer, or reporting-party perspective
+
+sources:
+  trace:
+    table: marketdb.trace
+    inferred_type: executed_trace_prints
+    primary_key_candidate:
+      - cusip
+      - trd_exctn_ts
+      - rptd_pr
+      - entrd_vol_qt
+      - rpt_side_cd
+      - cntra_mp_id
+    event_timestamp: trd_exctn_ts
+    receive_timestamp: null
+    publication_timestamp: null
+    revision_timestamp: null
+    report_date: trd_rpt_dt
+    frequency: event
+    coverage:
+      first_timestamp: "2023-05-30 00:03:11"
+      last_timestamp: "2025-09-30 17:43:45"
+      rows: 7209827
+      cusips: 22682
+      issuers: 15
+      trade_dates: 749
+    units:
+      price: par_price_points_assumed
+      size: entrd_vol_qt_units_unknown
+    missingness:
+      cusip_null_rate: 0.0
+      issuer_null_rate: 0.000037171488303394796
+      event_timestamp_null_rate: 0.0
+      report_date_null_rate: 0.0
+      price_null_rate: 0.0
+      size_null_rate: 0.0
+      side_null_rate: 0.0
+    point_in_time_safety: partial
+    required_degradations:
+      - no_intraday_dissemination_timestamp
+      - side_semantics_need_validation
+      - filter_or_flag_likely_interdealer_double_report_leg
+      - treat_as_15_issuer_panel_not_market_wide
+
+  bond_link:
+    table: marketdb.bond_link
+    inferred_type: cusip_to_crsp_link
+    primary_key_candidate: [cusip, permno, trace_startdt, trace_enddt]
+    event_timestamp: null
+    receive_timestamp: null
+    publication_timestamp: null
+    revision_timestamp: null
+    frequency: reference
+    rows: 53785
+    point_in_time_safety: partial
+    required_degradations:
+      - use_date_windows
+      - do_not_assume_link_publication_time
+
+  bond_to_equity:
+    table: marketdb.bond_to_equity
+    inferred_type: trace_joined_to_equity_names
+    primary_key_candidate:
+      - cusip
+      - trd_exctn_ts
+      - rptd_pr
+      - entrd_vol_qt
+      - rpt_side_cd
+      - cntra_mp_id
+      - permno
+    event_timestamp: trd_exctn_ts
+    receive_timestamp: null
+    publication_timestamp: null
+    revision_timestamp: null
+    frequency: event_view
+    coverage:
+      first_date: "2023-05-30"
+      last_date: "2025-09-30"
+      rows: 7094903
+      cusips: 22376
+      tickers: 13
+    point_in_time_safety: partial
+    required_degradations:
+      - prefer_trace_company_symbol_for_issuer_grouping
+      - handle_name_extrapolated_explicitly
+
+  crsp_daily:
+    table: marketdb.crsp_daily
+    inferred_type: daily_equity_returns
+    primary_key_candidate: [permno, date]
+    event_timestamp: date
+    receive_timestamp: null
+    publication_timestamp: null
+    revision_timestamp: null
+    frequency: daily
+    coverage:
+      first_date: "2019-01-02"
+      last_date: "2021-12-31"
+      rows: 22710
+      permnos: 30
+    units:
+      price: equity_price
+      return: decimal_return
+    point_in_time_safety: partial
+    required_degradations:
+      - lag_daily_fields_for_intraday_predictions
+      - no_overlap_with_2023_2025_trace_panel_for_same_period_equity_alpha
+
+  credit_etf_books:
+    tables: [book_coverage, db_book, lob_book, lob_msg, lob_ts]
+    inferred_type: etf_order_book_events
+    primary_key_candidate: [symbol, trade_date, ts_event, sequence]
+    event_timestamp: ts_event
+    receive_timestamp: null
+    publication_timestamp: ts_event
+    revision_timestamp: null
+    frequency: event
+    confirmed_symbols:
+      LQD:
+        first_date: "2019-01-30"
+        last_date: "2026-05-29"
+        days: 763
+      HYG:
+        first_date: "2019-01-30"
+        last_date: "2026-05-28"
+        days: 762
+      JNK:
+        first_date: "2019-01-30"
+        last_date: "2026-05-29"
+        days: 763
+    point_in_time_safety: likely_safe_if_ts_event_is_exchange_timestamp
+    required_degradations:
+      - do_not_sum_alternate_book_views
+      - use_book_coverage_for_deduplicated_coverage
+
+missing_sources:
+  rfq_events:
+    status: unavailable
+    missing_fields:
+      - rfq_id
+      - request_timestamp
+      - quote_time
+      - venue
+      - protocol
+      - number_of_dealers
+      - request_type
+      - firm_up_status
+      - execution_status
+  bond_composite_quotes:
+    status: unavailable
+    missing_fields: [bid, ask, mid, quote_size, contributor_count, revision_timestamp]
+  evaluated_prices:
+    status: unavailable
+    missing_fields: [fair_value, spread, oas, evaluation_timestamp, publication_timestamp, revision_timestamp]
+  security_master:
+    status: unavailable
+    missing_fields:
+      - rating
+      - sector
+      - maturity
+      - coupon
+      - duration
+      - convexity
+      - issue_size
+      - amount_outstanding
+  news_and_sentiment:
+    status: unavailable
+  cdx_vix_move:
+    status: unavailable
+
+candidate_canonical_events:
+  source: marketdb.trace
+  fields:
+    event_id:
+      source: derived_hash
+      availability: derivable
+    prediction_timestamp:
+      source: trd_exctn_ts
+      availability: directly_available
+    publication_timestamp:
+      source: null
+      availability: unavailable
+    source_bond_id:
+      source: cusip
+      availability: directly_available
+    source_issuer_id:
+      source: company_symbol
+      availability: directly_available_with_small_missingness
+    side_dealer_perspective:
+      source: rpt_side_cd
+      availability: ambiguous
+    price:
+      source: rptd_pr
+      availability: directly_available
+    notional:
+      source: entrd_vol_qt
+      availability: ambiguous_units
+    is_interdealer:
+      source: cntra_mp_id
+      availability: derivable
+    yield:
+      source: yld_pt
+      availability: directly_available_but_string_typed
+
+minimum_validation_before_factor_code:
+  - resolve_side_perspective
+  - resolve_size_units
+  - decide_interdealer_double_report_filter
+  - define_publication_time_policy_for_trace
+  - choose_trade_price_proxy_or_add_fair_value_source
+  - freeze_train_validation_test_split_by_time
+  - choose issuer grouping from company_symbol unless equity link is required
+

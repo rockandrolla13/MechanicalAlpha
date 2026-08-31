@@ -1,0 +1,190 @@
+version: 0.1.0
+status: deterministic_formula_registry
+side_convention:
+  canonical: customer_perspective
+  customer_buy: 1
+  customer_sell: -1
+  trace_warning: TRACE side must come from a documented source or validated classifier before being treated as observed customer side.
+point_in_time_rule:
+  feature_observation_cutoff: observation_timestamp < prediction_timestamp
+  same_timestamp_policy: exclude
+features:
+  - id: A1
+    name: RFQ count imbalance
+    formula: "(customer_buy_count_w - customer_sell_count_w) / (customer_buy_count_w + customer_sell_count_w + epsilon)"
+    source_fields:
+      - rfqs.timestamp
+      - rfqs.side
+      - rfqs.event_kind
+      - events.prediction_timestamp
+      - events.side
+    clocks:
+      - calendar_time
+      - rfq_event_time
+      - trace_transaction_time
+    windows:
+      - 30m
+      - 2h
+      - last_5
+      - last_10
+      - last_25
+    minimum_observations: 1
+    missing_policy: Missing when the source table or valid side is unavailable.
+    expected_sign: Positive means recent customer-buy pressure.
+    class: directional
+    point_in_time_dependencies:
+      - source event time strictly before prediction timestamp
+    computational_cost: O(prediction_rows * window_rows)
+    version: 0.1.0
+  - id: A2
+    name: RFQ notional imbalance
+    formula: "sum(customer_side_j * transformed_notional_j) / (sum(abs(transformed_notional_j)) + epsilon)"
+    source_fields:
+      - rfqs.timestamp
+      - rfqs.side
+      - rfqs.size
+      - events.prediction_timestamp
+      - events.side
+      - events.notional
+    clocks:
+      - calendar_time
+      - rfq_event_time
+      - trace_transaction_time
+    windows:
+      - 30m
+      - 2h
+      - last_5
+      - last_10
+      - last_25
+    variants:
+      - raw_notional
+      - log_notional
+      - capped_notional
+      - sqrt_notional
+    minimum_observations: 1
+    missing_policy: Missing when notional or side is unavailable.
+    expected_sign: Positive means larger recent customer-buy notional pressure.
+    class: directional
+    point_in_time_dependencies:
+      - source event time strictly before prediction timestamp
+      - caps use only rows inside the as-of window
+    computational_cost: O(prediction_rows * window_rows)
+    version: 0.1.0
+  - id: A3
+    name: Buy/sell intensity pressure
+    formula: elapsed-time EWMA buy and sell intensities with difference, ratio, and log ratio
+    source_fields:
+      - rfqs.timestamp
+      - rfqs.side
+      - events.prediction_timestamp
+      - events.side
+    clocks:
+      - calendar_time
+    windows:
+      - 30m_half_life
+      - 2h_half_life
+    minimum_observations: 1
+    missing_policy: Missing when no prior observations exist for the source.
+    expected_sign: Higher buy-minus-sell or log ratio means customer-buy pressure.
+    class: directional
+    point_in_time_dependencies:
+      - source event time strictly before prediction timestamp
+      - EWMA weights use elapsed time
+    computational_cost: O(prediction_rows * prior_rows)
+    version: 0.1.0
+  - id: A4
+    name: Last-side persistence and switching state
+    formula: last side, run length, time since side change, same-side fractions, interactions, and switching hazard
+    source_fields:
+      - rfqs.timestamp
+      - rfqs.side
+      - events.prediction_timestamp
+      - events.side
+    clocks:
+      - rfq_event_time
+      - trace_transaction_time
+    windows:
+      - last_5
+      - last_10
+      - last_25
+    minimum_observations: 1
+    missing_policy: Missing when no prior valid-side observations exist.
+    expected_sign: Positive last side means the latest observable side was customer buy.
+    class: directional
+    point_in_time_dependencies:
+      - source event time strictly before prediction timestamp
+    computational_cost: O(prediction_rows * window_rows)
+    version: 0.1.0
+  - id: A5
+    name: Multi-clock activity surprise
+    formula: recent activity minus as-of historical same-hour baseline, divided by baseline scale
+    source_fields:
+      - rfqs.timestamp
+      - rfqs.size
+      - events.prediction_timestamp
+      - events.notional
+    clocks:
+      - calendar_time
+    windows:
+      - 30m
+      - 2h
+    minimum_observations: 3
+    missing_policy: Missing when the source or as-of baseline is too sparse.
+    expected_sign: Positive means activity is above its own time-of-day baseline.
+    class: liquidity
+    point_in_time_dependencies:
+      - source event time strictly before prediction timestamp
+      - baseline uses prior same-hour rows only
+    computational_cost: O(prediction_rows * prior_rows)
+    version: 0.1.0
+  - id: A6
+    name: Spread-conditioned flow pressure
+    formula: flow pressure interacted with latest as-of composite spread, spread percentile, asymmetry, disagreement, staleness, and liquidity bucket
+    source_fields:
+      - quotes.timestamp
+      - quotes.bid
+      - quotes.ask
+      - quotes.mid
+      - quotes.spread
+      - events.side
+      - events.notional
+      - bonds.liquidity_bucket
+    clocks:
+      - calendar_time
+      - trace_transaction_time
+    windows:
+      - latest_quote_before_timestamp
+      - trace_last_5
+    minimum_observations: 1
+    missing_policy: Missing for unavailable quote fields. Flow remains available when signed trade flow exists.
+    expected_sign: Positive flow with wide or stale spreads flags directional pressure under weaker liquidity.
+    class: liquidity
+    point_in_time_dependencies:
+      - quote timestamp strictly before prediction timestamp
+      - flow events strictly before prediction timestamp
+    computational_cost: O(prediction_rows * quote_rows + window_rows)
+    version: 0.1.0
+  - id: A16
+    name: RFQ scarcity and disagreement
+    formula: responder count, scarcity, quote dispersion, latency, no-response rate, firm-up rate, execution rate, and latest executable indication age
+    source_fields:
+      - rfqs.timestamp
+      - rfqs.number_of_dealers
+      - rfqs.response_count
+      - rfqs.response_latency_ms
+      - rfqs.responded
+      - rfqs.firmed_up
+      - rfqs.executed
+    clocks:
+      - rfq_event_time
+    windows:
+      - latest_rfq_before_timestamp
+      - last_25
+    minimum_observations: 1
+    missing_policy: Missing for RFQ fields absent from the canonical RFQ table.
+    expected_sign: Higher scarcity or disagreement means worse liquidity and more uncertainty.
+    class: liquidity
+    point_in_time_dependencies:
+      - RFQ timestamp strictly before prediction timestamp
+    computational_cost: O(prediction_rows * window_rows)
+    version: 0.1.0

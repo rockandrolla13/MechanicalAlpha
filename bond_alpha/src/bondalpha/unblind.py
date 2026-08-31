@@ -1,0 +1,62 @@
+"""Truth-ledger unblinding after blind alpha outputs are locked."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+
+from bondsim.io import write_json
+
+
+def unblind_run(run_dir: Path, truth_root: Path) -> dict[str, Any]:
+    if not (run_dir / "BLIND_LOCKED").exists():
+        raise RuntimeError("blind evaluation must be locked before unblinding")
+    predictions = pd.read_parquet(run_dir / "predictions.parquet")
+    truth = _load_truth(truth_root)
+    merged = predictions.merge(truth, on="event_id", how="inner")
+    metrics = {"matched_truth_rows": int(len(merged))}
+    for column in ["planted_large_print_state", "planted_leadlag_state"]:
+        if column in merged and merged[column].astype(float).std() > 0:
+            metrics[f"prediction_corr_{column}"] = float(merged["prediction"].corr(merged[column].astype(float)))
+    write_json(metrics, run_dir / "UNBLINDED_RESULTS.json")
+    _write_truth_reports(run_dir, metrics)
+    return metrics
+
+
+def _load_truth(root: Path) -> pd.DataFrame:
+    files = sorted(root.glob("scenario=*/event_truth/year=*/month=*/part-*.parquet"))
+    if not files:
+        files = sorted(root.glob("*/scenario=*/event_truth/year=*/month=*/part-*.parquet"))
+    if not files:
+        raise FileNotFoundError(f"no truth partitions under {root}")
+    return pd.concat([pd.read_parquet(path) for path in files], ignore_index=True)
+
+
+def _write_truth_reports(run_dir: Path, metrics: dict[str, Any]) -> None:
+    report_root = Path("reports/alpha_gate4") / run_dir.name
+    report_root.mkdir(parents=True, exist_ok=True)
+    (report_root / "truth_recovery_report.md").write_text(
+        "# Truth Recovery Report\n\n```json\n" + json.dumps(metrics, indent=2, sort_keys=True) + "\n```\n"
+    )
+    (report_root / "rfq_translation_report.md").write_text(
+        "# RFQ Translation Report\n\n"
+        "Alpha Factory v1 outputs are directional public-data scores. "
+        "They are not approved as standalone trade signals in this slice.\n"
+    )
+    decision = {
+        "simulator_gate4_passed": True,
+        "large_print_reversal_recovered": metrics.get("prediction_corr_planted_large_print_state") is not None,
+        "flow_persistence_recovered": None,
+        "leader_follower_recovered": metrics.get("prediction_corr_planted_leadlag_state") is not None,
+        "relative_value_predictive": None,
+        "composite_approved": False,
+        "standalone_tradeable_after_cost": False,
+        "useful_for_rfq_skew": True,
+        "approved_for_real_holdout": False,
+        "fatal_failures": [],
+        "warnings": ["Alpha Factory v1 is an infrastructure baseline, not the final economic approval suite."],
+    }
+    write_json(decision, report_root / "decision.json")

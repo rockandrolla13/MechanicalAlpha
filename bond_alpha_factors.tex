@@ -1,0 +1,575 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage[colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+\usepackage{parskip}
+
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Prob}{\mathbb{P}}
+\newcommand{\ind}[1]{\mathbb{1}_{\{#1\}}}
+\newcommand{\sgn}{\operatorname{sgn}}
+\newcommand{\Rank}{\operatorname{CsRank}}
+\newcommand{\TsRank}{\operatorname{TsRank}}
+\DeclareMathOperator{\EMA}{EMA}
+\DeclareMathOperator{\VWAP}{VWAP}
+\DeclareMathOperator{\Std}{Std}
+\DeclareMathOperator{\Corr}{Corr}
+\DeclareMathOperator{\Cov}{Cov}
+\DeclareMathOperator{\Mean}{Mean}
+\DeclareMathOperator{\Skew}{Skew}
+\DeclareMathOperator{\Kurt}{Kurt}
+
+% Simple algorithm environment (prose steps, no code)
+\newcounter{algo}
+\newenvironment{algo}[1]{%
+  \refstepcounter{algo}%
+  \par\medskip\noindent\textbf{Algorithm \thealgo\ (#1).}%
+  \begin{enumerate}[label=\arabic*.,leftmargin=2em,itemsep=1pt,topsep=3pt]}%
+  {\end{enumerate}\medskip}
+
+% Factor heading
+\newcounter{fac}
+\newcommand{\factor}[2]{%
+  \refstepcounter{fac}%
+  \par\medskip\noindent\textbf{F\thefac\ --- #1} \hfill {\small[#2]}\par\nopagebreak}
+
+\title{\textbf{Alpha-Prediction Factors for Corporate Bonds}\\[4pt]
+\large A compendium of signals extracted from limit-order-book microstructure\\ and formulaic alpha-mining literature, translated to an OTC bond tape}
+\author{Compiled factor reference}
+\date{August 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent This document extracts the return-predictive (``alpha'') content of fifteen papers spanning limit-order-book (LOB) microstructure, order-flow point-process modeling, price impact, flow toxicity, sparse-orderbook electricity forecasting, and machine-generated formulaic alphas, and restates each signal in a form computable on a corporate-bond data set (a TRACE-style trade tape plus dealer composite quotes). Scope is restricted to \emph{prediction of future price or spread changes}; quote-placement, execution-scheduling, and market-making control problems are deliberately excluded, though predictive state variables arising inside those frameworks are retained. Each factor is given with (i) a mathematical definition, (ii) the economic intuition, and (iii) the bond-market translation. Short, language-agnostic reproduction algorithms follow in Section~\ref{sec:algos}, and a source-mapping table closes the document.
+\end{abstract}
+
+\tableofcontents
+
+%======================================================================
+\section{Data model, clocks, and notation}\label{sec:notation}
+
+\paragraph{Instruments and tape.} Fix a bond universe $\mathcal{B}$. For bond $b$ the trade tape is a marked point process $\{(t_k, P_k, V_k, d_k)\}_k$ with execution time $t_k$, clean price $P_k$, par volume $V_k$, and direction flag
+\[
+d_k \in \{+1 \ (\text{customer buy}),\ -1 \ (\text{customer sell}),\ 0 \ (\text{interdealer})\},
+\]
+as reported on a TRACE-style feed. Where available, a composite quote process supplies bid $P^B_t$, ask $P^A_t$, and contributed sizes $q^B_t, q^A_t$ (e.g.\ aggregated dealer axes or CBBT/CP+-style composites). The mid is $m_t = \tfrac12(P^B_t + P^A_t)$ and the quoted spread $s_t = P^A_t - P^B_t$; when quotes are unavailable, replace $m_t$ by a robust trade-based fair value (F15--F18) and $s_t$ by the realized effective spread (F22).
+
+\paragraph{Returns.} Simple returns $r_{t,\delta} = P_{t+\delta}/P_t - 1$ on price, or spread changes $\Delta s^{OAS}$ where spread-space prediction is preferred. All factors below are stated in price space; a sign flip converts to spread space.
+
+\paragraph{Clocks.} Three clocks aggregate the tape (following the toxic-flow and VPIN literature). This choice is \emph{essential} for bonds, where calendar time is mostly empty:
+\begin{itemize}[itemsep=1pt]
+\item \textbf{Time clock:} window $=$ last $\delta$ units of calendar time.
+\item \textbf{Volume clock:} window $=$ most recent prints totalling $V^\ast$ of par volume.
+\item \textbf{Transaction clock:} window $=$ last $k$ prints.
+\end{itemize}
+A \emph{fallback-window rule} (from the sparse-orderbook electricity literature) handles empty windows: given nested horizons $\delta_1 < \delta_2 < \dots < \delta_W$, compute each feature on the shortest window containing at least one print; discard the observation only if the full-history window is empty.
+
+\paragraph{Operator grammar.} Cross-sectional and time-series operators from the alpha-mining papers, used throughout:
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Operator & Type & Meaning \\
+\midrule
+$\operatorname{Ref}(x,t)$, $\Delta(x,t) = x - \operatorname{Ref}(x,t)$ & TS & lag; $t$-period difference \\
+$\Mean(x,t)$, $\operatorname{Med}(x,t)$, $\operatorname{Sum}(x,t)$ & TS & rolling mean / median / sum \\
+$\Std(x,t)$, $\operatorname{Var}(x,t)$, $\operatorname{Mad}(x,t)$ & TS & rolling dispersion; $\operatorname{Mad}=\E|x-\E x|$ \\
+$\operatorname{Min}(x,t)$, $\operatorname{Max}(x,t)$ & TS & rolling extremes \\
+$\operatorname{WMA}(x,t)$, $\EMA(x,t)$ & TS & weighted / exponential moving average \\
+$\Corr(x,y,t)$, $\Cov(x,y,t)$ & TS & rolling correlation / covariance \\
+$\TsRank(x,t)$ & TS & rank of current value within its own last $t$ values \\
+$\Rank(x)$ & CS & cross-sectional rank across bonds on a date \\
+$\operatorname{Greater}$, $\operatorname{Less}$, $\operatorname{IfElse}$, $\operatorname{Abs}$, $\operatorname{Log}$, $\sgn$ & CS & elementwise \\
+\bottomrule
+\end{tabular}
+\end{center}
+Cross-sectional ranking should be performed \emph{within homogeneous buckets} (rating $\times$ maturity $\times$ sector, or versus issuer curve) so that ranks compare like with like.
+
+%======================================================================
+\section{Signed-flow and trade-sign factors}\label{sec:flow}
+
+\factor{Last-trade sign}{Muni Toke--Yoshida}
+\[
+\epsilon_t = d_{k(t)}, \qquad k(t) = \max\{k : t_k \le t,\ d_k \neq 0\}.
+\]
+\emph{Intuition.} Order flow is autocorrelated: the sign of the most recent customer trade predicts the sign of the next one, and hence the direction of the next price adjustment. In the intensity-ratio study this covariate is never dropped by model selection.
+\emph{Bond translation.} Directly computable from the TRACE buy/sell flag. Because bonds trade sparsely, decay the signal with time-since-last-trade (see F3) rather than using the raw sign indefinitely.
+
+\factor{Signed-spread interaction}{Muni Toke--Yoshida}
+\[
+X_t = s_t \,\epsilon_t
+\qquad\text{or, in regime form,}\qquad
+X_t = \ind{s_t > \bar s}\,\epsilon_t ,
+\]
+with $\bar s$ a trailing mean of the spread.
+\emph{Intuition.} The empirical finding: when the spread is wide, book-imbalance signals flatten and the \emph{persistence of the last trade sign strengthens}. The interaction term, not the spread alone, carries the information; model selection retains $(i, \epsilon, s\epsilon)$ and essentially never $(i,\epsilon,s)$.
+\emph{Bond translation.} Bonds are a permanently wide-spread market, so sign-persistence terms should be weighted \emph{up} relative to imbalance terms; the interaction lets the data set the mix bond-by-bond.
+
+\factor{Exponentially decayed signed flow (flow pressure)}{Hawkes covariates; Bank--Cartea--K\"orber}
+\[
+F_t(\beta) \;=\; \sum_{t_k \le t} e^{-\beta\,(t - t_k)}\; d_k\, V_k ,
+\]
+computed for a small grid of decay rates $\beta \in \{\beta_{\text{fast}}, \beta_{\text{med}}, \beta_{\text{slow}}\}$ (e.g.\ half-lives of 1 day, 1 week, 1 month for bonds).
+\emph{Intuition.} A tradable scalar summary of the mutually exciting order-flow intensities: recent net customer buying predicts continued buying and upward price adjustment at short horizons, and reversion at long horizons once the flow is inventory-driven (see F13).
+\emph{Bond translation.} Use signed par volume from TRACE; normalize by amount outstanding or by trailing average volume to make $F_t$ comparable across bonds. The pair $(F_t(\beta_{\text{fast}}), F_t(\beta_{\text{slow}}))$ separates continuation from reversion horizons.
+
+\factor{Per-type Hawkes intensity covariates}{Muni Toke--Yoshida}
+For each flow type $i$ (customer buy, customer sell, interdealer; optionally split aggressive vs.\ non-aggressive by whether the print is at/through the far quote),
+\[
+H_i(t) \;=\; \log\!\Big( \mu_i + \textstyle\int_0^t \alpha_i\, e^{-\beta_i (t-u)}\, dN^i_u \Big),
+\]
+with $(\mu_i,\alpha_i,\beta_i)$ fitted by maximum likelihood per bond or pooled per liquidity bucket.
+\emph{Intuition.} The fitted self-/cross-excitation intensity of each order type is itself a covariate: elevated buy-side intensity relative to sell-side intensity predicts the side of the next trade. In the marked-point-process study, the covariate sets $(Z_1, H_{\text{aggr.buy}}, H_{\text{aggr.sell}}, H_{\text{buy}}, H_{\text{sell}})$ dominate model selection.
+\emph{Bond translation.} Fit on the TRACE arrival times per side. For very sparse bonds, pool the Hawkes parameters within issuer or rating bucket and keep only the state $H_i(t)$ bond-specific.
+
+\factor{Buy/sell separated print streams and their gap}{OrderFusion}
+Maintain the two sides as separate series and use both their difference and their interaction:
+\[
+\VWAP^{+}_{[t-\delta,t]} = \frac{\sum_{k:\,d_k=+1} P_k V_k}{\sum_{k:\,d_k=+1} V_k},
+\qquad
+\VWAP^{-}_{[t-\delta,t]} \ \text{analogously},
+\]
+\begin{gather*}
+G_t = \VWAP^{+} - \VWAP^{-} \quad (\text{realized effective spread; see F22}),\\
+\Pi_t = \frac{\sum_{d_k=+1} V_k - \sum_{d_k=-1} V_k}{\sum_{d_k\neq 0} V_k} \quad (\text{volume pressure}).
+\end{gather*}
+\emph{Intuition.} Aggregating the two sides into one series destroys the buy--sell interaction structure, which is where much of the predictive content lives; the electricity work encodes the sides as two separate 2-D streams for exactly this reason.
+\emph{Bond translation.} TRACE side flags make this free. $\Pi_t$ is the trade-based analogue of book imbalance; $G_t$ doubles as a liquidity factor.
+
+%======================================================================
+\section{Imbalance and quote-based factors}\label{sec:imb}
+
+\factor{Best-quote imbalance}{Lehalle--Neuman; Muni Toke--Yoshida $Z_1$; Palguna--Pollak SI}
+\[
+I_t = \frac{q^B_t - q^A_t}{q^B_t + q^A_t} \in [-1,1].
+\]
+\emph{Intuition.} Standing bid-side size in excess of ask-side size predicts an upward next move; empirically the signal behaves like a mean-reverting Ornstein--Uhlenbeck process,
+\[
+dI_t = -\gamma I_t\,dt + \sigma_I\, dW_t,
+\]
+so its value decays at a known rate --- important when the prediction horizon is longer than the signal half-life $\log 2/\gamma$.
+\emph{Bond translation.} Replace queue sizes with (i) counts/sizes of dealer axes bid-wanted vs.\ offered, (ii) direction imbalance of recent inquiry flow, or (iii) size asymmetry among composite-quote contributors. Weaker than in a firm-quote LOB (bond quotes are indicative), but the OU decay structure carries over and calibrates the usable horizon.
+
+\factor{Multi-level, multi-lookback book-pressure grid}{Li et al.}
+\[
+\operatorname{OBP}(n,\ell)_t \;=\;
+\frac{\sum_{\tau=0}^{n}\sum_{j=1}^{\ell} \text{BidSize}_{j,\,t-\tau}}
+     {\sum_{\tau=0}^{n}\sum_{i=1}^{\ell} \text{AskSize}_{i,\,t-\tau}},
+\]
+computed on a grid of lookbacks $n$ and depth levels $\ell$ and fed \emph{as a vector} to a classifier (no single calibration).
+\emph{Intuition.} Persistent one-sided pressure across depth levels and across time predicts the direction of the mid; letting the learner weight the $(n,\ell)$ grid avoids committing to one parameterization.
+\emph{Bond translation.} Replace ``levels'' by \emph{dealers}: aggregate axe/quote size across contributing dealers, over lookbacks of $\{1,5,21\}$ days. The grid-not-scalar design principle transfers unchanged.
+
+\factor{Order-flow imbalance (event-signed quote changes)}{Palguna--Pollak, after Cont et al.}
+At quote-update events $T_i$,
+\[
+e_{i+1} = \ind{P^B_{i+1} \ge P^B_i}\, q^B_{i+1} - \ind{P^B_{i+1} \le P^B_i}\, q^B_i
+        - \ind{P^A_{i+1} \le P^A_i}\, q^A_{i+1} + \ind{P^A_{i+1} \ge P^A_i}\, q^A_i,
+\qquad
+\operatorname{OFI}_t = \sum_{i=t-E+1}^{t} e_i .
+\]
+\emph{Intuition.} Signed changes in posted supply and demand --- not just standing levels --- measure the net arrival of buying vs.\ selling interest. Predicts sign of the next mid move.
+\emph{Bond translation.} Apply to the \emph{composite} bid/ask: a dealer lifting their contributed bid is information even when no trade prints. Event-clocked by construction, hence robust to sparse activity.
+
+%======================================================================
+\section{Reversal and price-pressure factors}\label{sec:rev}
+
+\factor{Moving-average deviation reversal}{FactorMiner 002/006}
+\[
+X_t = -\,\frac{P_t - \EMA(P,\,n)_t}{\EMA(P,\,n)_t}
+\qquad\text{and}\qquad
+X_t = -\,\frac{P_t - \VWAP_{[t-\delta,t]}}{\VWAP_{[t-\delta,t]}} .
+\]
+\emph{Intuition.} Price above its own recent average reverts. In credit, the mechanism is concrete: prints away from fair value are dealer-intermediated liquidity events whose price concession is subsequently recouped.
+\emph{Bond translation.} Use trade-print price vs.\ VWAP of recent TRACE prints (volume clock recommended); horizon days-to-weeks. Among the most robust documented corporate-bond alphas.
+
+\factor{Volume-conditioned reversal}{FactorMiner 004/008}
+\begin{gather*}
+X_t = \Rank\!\Big(\frac{V_t}{\Mean(V,\,n)_t}\Big)\cdot \Rank(-\,r_t)
+\qquad\text{or}\\
+X_t = -\,\Rank\!\Big(\frac{r_t}{\Std(r,\,n)_t + \varepsilon}\Big)\cdot \Rank\!\Big(\frac{V_t}{\Mean(V,\,n)_t}\Big).
+\end{gather*}
+\emph{Intuition.} Reversal is strongest when the move was accompanied by abnormal volume: high-volume moves are predominantly liquidity demand, and the liquidity provider's compensation is the subsequent reversion. The second form standardizes the return by its own volatility before ranking.
+\emph{Bond translation.} TRACE volume spike $\times$ price drop $\Rightarrow$ buy. Normalize volume by amount outstanding. This is the single highest-conviction transfer in the document.
+
+\factor{Range-position (stochastic-oscillator) reversal}{FactorMiner 001/005/018}
+\[
+K_t(n) = \frac{P_t - \operatorname{Min}(P,\,n)_t}{\operatorname{Max}(P,\,n)_t - \operatorname{Min}(P,\,n)_t + \varepsilon} \in [0,1],
+\qquad X_t = -\,\Rank\big(K_t(n)\big),
+\]
+optionally interacted with $\TsRank$ of volume or of $\Cov(r, V, n)$ as in the mined variants.
+\emph{Intuition.} Position within the recent trading range proxies over-extension; the top of the range predicts negative drift and vice versa.
+\emph{Bond translation.} Computable on weekly bars where bond sparsity forces coarse sampling; combine with F16 extremes.
+
+\factor{Conditional reversal/momentum switch}{FactorMiner 019/031/034}
+\[
+X_t = \operatorname{IfElse}\!\Big( |{\textstyle\frac{P_t - \VWAP_t}{\VWAP_t}}| > c,\;
+ -\Rank\big(P_t - \operatorname{Max}(P,n)_t\big),\;
+ -\Rank\big(P_t - \operatorname{Min}(P,n)_t\big)\Big).
+\]
+\emph{Intuition.} When price is dislocated from VWAP beyond a threshold, fade the extreme; otherwise trade the drift toward the range boundary. Encodes a regime switch between pressure-reversion and drift regimes.
+\emph{Bond translation.} Threshold $c$ in spread terms (e.g.\ a fraction of typical bid--offer) rather than a fixed percentage.
+
+\factor{Impact-state de-pressured value (propagator residual)}{Webster / Obizhaeva--Wang}
+Model the transient impact state per bond,
+\[
+dI_t = -\beta\, I_t\, dt + \lambda\, dQ_t, \qquad dQ_t = d_k V_k \ \text{at print times},
+\]
+i.e.\ $I_t = \lambda \sum_{t_k \le t} e^{-\beta (t-t_k)} d_k V_k$ (note $I_t = \lambda F_t(\beta)$ from F3), and define the de-pressured value and the factor
+\[
+\widehat{P}_t = P_t - I_t, \qquad X_t = -\,I_t .
+\]
+\emph{Intuition.} Observed price $=$ fundamental $+$ transient impact; the transient part decays at rate $\beta$, so the expected return over horizon $h$ is $-I_t\,(1-e^{-\beta h})$. This is the model-based twin of F9: reversal \emph{is} impact decay. The key structural result is myopia --- for a large model class the mapping from flow to expected reversion is a simple function of the impact level and its decay rate, so no dynamic optimization is needed to use it as a predictor.
+\emph{Bond translation.} $\beta$ is slow for bonds (impact decays over days, not minutes); estimate $(\lambda,\beta)$ per liquidity bucket by regressing future returns on decayed signed flow at several horizons.
+
+\factor{Price--volume rank divergence}{FactorMiner 003/020/032; AlphaGen operators}
+\begin{gather*}
+X_t = \Rank\big(\Delta(V,\,k)_t\big) - \Rank\Big(\frac{P_t - \VWAP_t}{\VWAP_t}\Big),\\
+X_t = -\,\TsRank\Big( \Rank\big(\Delta(r,\,2)\big) - \Rank\big(\Delta(V,\,2)\big),\, n \Big),
+\end{gather*}
+\[
+X_t = -\,\TsRank\!\Big( \Cov\big(\TsRank(P,\,n),\, \TsRank(V,\,n),\, k\big),\, n\Big)\cdot \TsRank\!\big(K_t(n),\, n\big).
+\]
+\emph{Intuition.} Volume rising without price confirmation flags accumulation/distribution; sustained co-movement of price and volume ranks near the top of the range flags exhaustion.
+\emph{Bond translation.} Weekly TRACE aggregates; untested in credit but computationally free once F9--F11 are built.
+
+%======================================================================
+\section{Fair-value statistics on a sparse tape}\label{sec:fv}
+
+The sparse-orderbook electricity studies extract price/volume statistics on both sides over nested lookbacks $\delta_w \in \{1,5,15,60,180,\infty\}$ (minutes there; scale to hours/days for bonds) and select with an $\ell_1$ penalty. The headline empirical result transfers as a prior: \emph{price percentiles ($\approx 30\%$ of selected importance), minima ($\approx 26\%$) and maxima ($\approx 22\%$) dominate; volume statistics contribute little; and medium lookbacks beat the shortest window}, because the freshest print is noisy.
+
+\factor{Trade-price percentiles}{orderbook feature learning}
+\[
+Q^{(p)}_{t}(\delta) = \operatorname{percentile}_{p}\{P_k : t_k \in [t-\delta, t]\},
+\qquad p \in \{10, 25, 45, 50, 55, 75, 90\}\%,
+\]
+computed separately for customer-buy, customer-sell, and all prints. Factors: the level $Q^{(50)}$ as fair value; the deviation $(P_t - Q^{(50)}_t)/Q^{(50)}_t$ as a reversal signal; the inter-percentile width $Q^{(75)}-Q^{(25)}$ as a dispersion/liquidity state.
+\emph{Bond translation.} The median of recent TRACE prints is a robust matrix-price-free fair value; percentile deviations are outlier-resistant versions of F9.
+
+\factor{Rolling extremes and their spread}{orderbook feature learning; FactorMiner}
+\[
+\operatorname{Min}(P,\delta)_t,\quad \operatorname{Max}(P,\delta)_t,\quad
+R_t(\delta) = \operatorname{Max} - \operatorname{Min}.
+\]
+Used directly (support/resistance content), inside $K_t$ (F11), and as the volatility proxy $R_t/Q^{(50)}_t$.
+
+\factor{Nested-window VWAPs and last/first prices}{OrderFusion; orderbook feature learning}
+\[
+\VWAP_{[t-\delta_w,\,t]} \ \ \text{for } \delta_w \in \{\delta_1,\dots,\delta_W\},\qquad
+P^{\text{last}}_t(\delta_w),\ P^{\text{first}}_t(\delta_w).
+\]
+\emph{Intuition.} The trade-weighted average over a medium window is the strongest single fair-value estimate in the sparse-market studies; the last print alone is weakly efficient but noisy. The \emph{vector} across windows, with the fallback rule of Section~\ref{sec:notation}, lets a sparse learner choose the horizon.
+\emph{Bond translation.} Windows of $\{1, 5, 21, 63\}$ trading days; per side and combined.
+
+\factor{Liquid-to-illiquid signal propagation}{orderbook feature learning (asymmetric generalization)}
+For an illiquid bond $b$ of issuer $j$, let $L(j)$ be the issuer's most liquid bond (or the on-the-run index constituent). Define
+\[
+X^{(b)}_t = X^{(L(j))}_t \quad \text{for any factor above,}
+\qquad\text{or the basis } \ Z_t = \tilde P^{(b)}_t - \big(\text{curve-implied price from } L(j)\big).
+\]
+\emph{Intuition.} The empirical asymmetry: feature sets and models estimated on the liquid market transfer to the illiquid one, \emph{but not the reverse}. Hence: estimate on liquid bonds, propagate signals along the issuer curve, and trade the illiquid sibling's convergence to the liquid-implied value.
+
+%======================================================================
+\section{Liquidity, illiquidity, and resilience factors}\label{sec:liq}
+
+\factor{Amihud illiquidity}{FactorMiner 013; standard credit literature}
+\[
+\operatorname{ILLIQ}_t(n) = \Mean\!\Big( \frac{|r_k|}{V_k},\, n\Big)_t .
+\]
+\emph{Intuition.} Price move per unit of volume; a priced characteristic (liquidity premium) and a conditioning variable for every flow factor above (impact $\lambda$ in F13 is proportional to it).
+
+\factor{Resilience (illiquidity improvement)}{FactorMiner 014}
+\[
+X_t = \Delta_k\!\left( \frac{ \Mean\big( |r|/V,\, n\big)_t }{\, |r_t|/V_t + \varepsilon\,} \right),
+\]
+the $k$-period change in the ratio of trailing-average to current illiquidity.
+\emph{Intuition.} Not the level but the \emph{dynamics}: a bond whose price-per-volume sensitivity is improving relative to its own history is absorbing flow better; deteriorating resilience predicts spread widening.
+
+\factor{Amount-efficiency family}{FactorMiner 073--099}
+\[
+\operatorname{AmtEff}_t = \frac{|r_{t}|}{\text{Turnover}_t + \varepsilon},
+\qquad \text{velocity} = \Delta_k \operatorname{AmtEff},
+\qquad \text{acceleration} = \Delta_k^2 \operatorname{AmtEff},
+\]
+with turnover $=$ volume / amount outstanding. Refinements of F19 that the mining agent rediscovered repeatedly; use one or two, orthogonalized against F19.
+
+\factor{Realized effective spread}{OrderFusion side separation; TRACE literature}
+\[
+S^{\mathrm{eff}}_t(\delta) = \VWAP^{+}_{[t-\delta,t]} - \VWAP^{-}_{[t-\delta,t]},
+\]
+customer-buy VWAP minus customer-sell VWAP (both from F5).
+\emph{Intuition.} The realized cost of immediacy without any quote data; widening $S^{\mathrm{eff}}$ predicts higher required returns (liquidity premium) and marks stress regimes in which reversal factors (F9--F11) pay more.
+
+\factor{Expected time-to-next-trade}{Palguna--Pollak $\E[\tau\,|\,S]$}
+\[
+X_t = \widehat{\E}\big[\tau_t \,\big|\, S_t\big], \qquad \tau_t = \inf\{u>0 : \text{a print occurs at } t+u\},
+\]
+estimated nonparametrically over states $S_t$ (see F31) or with a simple hazard model on time-since-last-trade.
+\emph{Intuition.} In a LOB this is the expected time to the first mid change; in bonds the expected time to the next print is itself a liquidity factor (staleness risk) and a gate: prediction horizons shorter than $\widehat{\E}[\tau]$ are not tradable.
+
+\factor{Quote-update intensity}{toxic-flow feature (c)}
+\[
+U_t(\delta) = \#\{\text{composite-quote revisions in } [t-\delta, t]\}.
+\]
+\emph{Intuition.} Dealer quote-revision activity leads trade activity; a burst of revisions with no prints signals imminent repricing. One of the eight per-clock LOB statistics in the toxicity feature grid (F30).
+
+%======================================================================
+\section{Momentum and trend-reliability factors}\label{sec:mom}
+
+\factor{Studentized (t-stat) momentum}{FactorMiner 023}
+\[
+X_t = \TsRank\!\left( \frac{\Delta(P,\,k)_t}{\Mean\big(|\Delta(P,\,k)|,\, n\big)_t},\; n\right).
+\]
+\emph{Intuition.} The trend divided by its own typical absolute size --- a signal-to-noise-scaled momentum that discounts moves within normal churn.
+\emph{Bond translation.} Apply to OAS changes: 3--6 month spread momentum is a documented credit factor; the studentization suppresses stale-price artifacts.
+
+\factor{Trend-reliability ($R^2$) weighting}{FactorMiner 080/083/085/090}
+Regress price (or log price) on time over the window, obtain slope $\hat\beta_t$ and fit $R^2_t$; define
+\[
+X_t = \sgn(\hat\beta_t)\cdot R^2_t
+\qquad\text{or}\qquad
+X_t = \Rank(\hat\beta_t)\cdot \Rank(R^2_t).
+\]
+\emph{Intuition.} A trend that explains its own path is more likely to be information-driven and to continue; a low-$R^2$ ``trend'' is pressure and mean-reverts. Provides a data-driven split between the momentum and reversal families.
+
+\factor{Cross-sectional lead--lag rank momentum}{FactorMiner 010/024/025}
+\begin{gather*}
+X_t = -\,\Rank\!\Big( \Rank\big(P_t/P_{t-k}\big) - \Rank\big(V_t/V_{t-k}\big) \Big),\\
+X_t = \TsRank\big(\Delta(P^{\text{first}},k),n\big) - \TsRank\big(\Delta(P^{\text{last}},k),n\big),
+\end{gather*}
+where $P^{\text{first}}, P^{\text{last}}$ are first/last prints in each bar (open/close analogues).
+\emph{Intuition.} Divergence between where the bar opens and closes, or between price and volume ranks, captures intrabar pressure direction.
+
+%======================================================================
+\section{Volatility and higher-moment factors}\label{sec:vol}
+
+\factor{Realized volatility and inverse-vol tilt}{toxic-flow feature (a); FactorMiner 009/015}
+\[
+\sigma_t(n) = \Std(r,\,n)_t, \qquad
+X_t = -\,\Rank(r_t)\cdot \Rank\big(\sigma_t(n)\big),
+\qquad
+X_t = -\,\Rank\big(\sigma_t(n)\big).
+\]
+\emph{Intuition.} (i) Mid-price volatility is a core state variable in every predictive grid in the corpus; (ii) reversal scaled up in high-vol names; (iii) the low-volatility tilt --- low-vol bonds earn higher risk-adjusted returns --- is a documented credit anomaly.
+
+\factor{Volatility-of-volatility}{FactorMiner 077}
+\[
+X_t = \Std\big(\sigma_\cdot(n),\, m\big)_t .
+\]
+\emph{Intuition.} Instability of the volatility state flags regime transitions; in credit, vol-of-vol rises ahead of downgrades and liquidity spirals.
+
+\factor{Rolling skewness and kurtosis regime switches}{FactorMiner 039/042--045/095}
+\begin{gather*}
+\Skew_t(n),\ \Kurt_t(n) \ \text{ of returns};\\
+X_t = \operatorname{IfElse}\big( \Kurt_t(n) > \kappa,\; -\Rank(\Delta(P,k)),\; +\Rank(\Delta(P,k)) \big).
+\end{gather*}
+\emph{Intuition.} Higher moments as environment switches: fat-tailed regimes favor fading moves, thin-tailed regimes favor following them. Credit returns are structurally negatively skewed, so cross-sectional \emph{differences} in rolling skew are informative about crash exposure pricing. Estimation noise on sparse tapes is severe; use long windows and shrink toward bucket means.
+
+%======================================================================
+\section{Flow-toxicity and informed-flow factors}\label{sec:tox}
+
+These originate in a broker's classification problem, but the \emph{label} (does the price move against the liquidity provider after the trade?) and the \emph{features} are pure prediction objects: a high predicted toxicity for observed flow is a directional signal that price will keep moving in the flow's direction.
+
+\factor{Markout label and toxicity propensity}{Cartea--Duran-Martin--S\'anchez-Betancourt}
+For a print at time $t$ with direction $d$, define the markout and label at horizon $G$:
+\[
+M_{t,G} = d\cdot\big(m_{t+G} - m_t\big), \qquad y_t = \ind{M_{t,G} > c} \in \{0,1\},
+\]
+and fit a classifier $\widehat{\Prob}(y_t = 1 \mid x_t)$ on the feature vector $x_t$ below. The \emph{factor} for bond $b$ is the toxicity-weighted signed flow
+\[
+X_t = \sum_{t_k \in [t-\delta, t]} \widehat{\Prob}(y_{t_k}=1 \mid x_{t_k})\; d_k V_k .
+\]
+\emph{Feature grid} (183 features in the source): eight LOB statistics --- (a) mid volatility, (b) client trade count, (c) quote-update count, (d) mid return, (e)--(f) $\log(1+q^B)$, $\log(1+q^A)$, (g) spread, (h) imbalance --- each under \emph{three clocks} (time, volume, transaction) and seven nested lookbacks, plus level features: order size, spread and imbalance at arrival, last bid/ask/mid, cumulative activity counts, a volatility estimate, and (crucially) the client's \emph{historical toxicity proportion}. Signed-log transforms $\sgn(x)\log(1+|x|)$ stabilize scale.
+\emph{Bond translation.} Horizon $G$ of 1--5 days; mid replaced by the F15 fair value. Where client identity is unavailable (public TRACE), replace client features with trade-size buckets and side-of-market persistence; where it is available (dealer's own RFQ log), the historical-toxicity ratio is the strongest single feature.
+
+\factor{Client historical toxicity ratio}{same}
+\[
+\rho^c_t = \frac{\#\{\text{toxic trades of client } c \text{ before } t\}}{\#\{\text{trades of client } c \text{ before } t\}} .
+\]
+Listed separately because it is a one-line feature with outsized importance, and because a pooled model over all clients \emph{with} client features outperforms per-client models --- a data-efficiency lesson that transfers to per-bond vs.\ pooled factor models.
+
+\factor{VPIN (volume-synchronized probability of informed trading)}{Easley et al., via Li et al.}
+Partition the tape into consecutive volume buckets of size $V^\ast$; within bucket $n$ let $V^{+}_n, V^{-}_n$ be buy and sell volume (by flag, or by bulk classification). Then
+\[
+\operatorname{VPIN}_t = \frac{1}{N}\sum_{n=1}^{N} \frac{|V^{+}_n - V^{-}_n|}{V^\ast}.
+\]
+\emph{Intuition.} A volume-clocked estimate of the informed share of flow; elevated VPIN precedes liquidity withdrawal and large moves. Its \emph{unsigned} nature makes it a risk/conditioning factor: it predicts volatility and the profitability of reversal factors rather than direction.
+
+\factor{Informed-inventory signal (flow decomposition)}{Cartea--S\'anchez-Betancourt}
+The dealing framework shows the relevant state variables are the informed traders' inventory and the two volume streams. As a prediction object: decompose observed flow using per-trade toxicity propensities (F27),
+\begin{gather*}
+Q^{\mathcal I}_t = \sum_{t_k \le t} \widehat{\Prob}(y_{t_k}=1\mid x_{t_k})\, d_k V_k,\\
+Q^{\mathcal U}_t = \sum_{t_k \le t} \big(1-\widehat{\Prob}(y_{t_k}=1\mid x_{t_k})\big)\, d_k V_k,
+\end{gather*}
+and use as factors
+\begin{gather*}
+X_t = +\Rank\big(\Delta Q^{\mathcal I}_t\big) \quad (\text{informed flow: continuation}),\\
+X_t = -\Rank\big(\Delta Q^{\mathcal U}_t\big) \quad (\text{uninformed flow: reversion}).
+\end{gather*}
+\emph{Intuition.} The two components of flow have opposite-signed predictive content; conflating them (as raw F3 does) averages the two effects away.
+
+%======================================================================
+\section{Intensity-ratio probability factors}\label{sec:ratio}
+
+\factor{Next-trade-side probability (Cox intensity ratio)}{Muni Toke--Yoshida (both papers)}
+Model buy and sell arrival intensities with a \emph{common unobserved baseline},
+\[
+\lambda^{\pm}(t) = \lambda_0(t)\, \exp\!\Big( \vartheta^{\pm}_0 + \sum_j \vartheta^{\pm}_j X_j(t) \Big),
+\]
+so that the baseline cancels in the ratio, leaving a logistic model with relative coefficients $\theta_j = \vartheta^{+}_j - \vartheta^{-}_j$:
+\[
+p_t \;=\; \Prob(\text{next trade is a buy} \mid \mathcal F_t)
+\;=\; \frac{\lambda^{+}(t)}{\lambda^{+}(t)+\lambda^{-}(t)}
+\;=\; \Big(1 + e^{-\theta_0 - \sum_j \theta_j X_j(t)}\Big)^{-1},
+\qquad X_t = 2p_t - 1 .
+\]
+Covariates $X_j$: imbalance (F6/F5's $\Pi$), last sign (F1), signed spread (F2), Hawkes states (F4). Estimated by multinomial-logistic quasi-likelihood on event times only.
+\emph{Intuition.} For bonds this construction is exceptionally well suited: the \emph{level} of activity is wildly nonstationary (new issues, index rebalances, macro prints) and lives in $\lambda_0$, which is never estimated; the tradable object --- the relative propensity of buys vs.\ sells given the state --- is exactly what survives the ratio. Two model-selection lessons transfer: imbalance alone is never the selected model, and the retained interaction is $s\epsilon$, not $s$.
+
+\factor{Two-stage side $\times$ aggressiveness ratios}{marked-point-process extension}
+Stage 1: side probability $p_t$ as in F31. Stage 2: conditional on side, the probability the trade is \emph{aggressive} (prints at or through the far composite quote), from a second ratio model with the same covariate family. The product gives four flow-type probabilities; the aggressive-buy minus aggressive-sell probability gap is the directional factor:
+\[
+X_t = p_t\, a^{+}_t - (1-p_t)\, a^{-}_t .
+\]
+\emph{Intuition.} Aggressive prints carry the information; the marked/two-stage decomposition isolates them. The same framework extends to predicting the \emph{size mark} of the next trade (volume prediction), useful as a flow forecast input to F13.
+
+%======================================================================
+\section{State-conditional nonparametric predictors}\label{sec:state}
+
+\factor{Conditional moment grid over discretized states}{Palguna--Pollak}
+Define a low-dimensional state, e.g.
+\[
+S_t = \Big( \big\lfloor \text{spread proxy} \big\rfloor,\ \big\lfloor \log(1+\text{time-since-last-trade}) \big\rfloor,\ \sgn(\text{last flow}) \Big),
+\]
+and estimate by historical averaging (with $k$-nearest-neighbor smoothing across adjacent states, respecting the sign of any imbalance coordinate):
+\[
+\widehat{\Prob}\big[\Delta m_{t,\delta} \neq 0 \,\big|\, S\big],\qquad
+\widehat{\E}\big[\Delta m_{t,\delta} \,\big|\, S\big],\qquad
+\widehat{\E}\big[\Delta m_{t,\tau} \,\big|\, S\big],\qquad
+\widehat{\E}\big[\tau \,\big|\, S\big],
+\]
+where $\tau$ is the time of the first fair-value change (or next print, for bonds). Prediction is two-stage: first test ``will it move within $\delta$'' against a threshold, then take the sign of the conditional mean.
+\emph{Intuition.} Fully nonparametric, hence assumption-free about functional form; the price is state coarseness. The two-stage structure (move / no-move, then direction) matches bond reality, where the modal outcome at short horizons is ``no print.''
+\emph{Bond translation.} $\widehat{\E}[\tau\mid S]$ doubles as F23. Estimate within liquidity buckets, pooling bonds to populate states.
+
+%======================================================================
+\section{Composite and machine-generated cross-sectional alphas}\label{sec:mined}
+
+Representative mined expressions from the RL/MCTS/agentic miners, translated to the bond tape (all crash-safe with $\varepsilon$ guards; $r$ denotes bar returns, $V$ bar volume):
+{\small
+\begin{align}
+X^{(1)}_t &= -\,\Rank\!\left( \frac{P_t - \operatorname{Min}(P,n)_t}{\operatorname{Max}(P,n)_t - \operatorname{Min}(P,n)_t + \varepsilon} \right)
+&&\text{(range-position fade)}\\[2pt]
+X^{(2)}_t &= \Rank\big(\Delta(V,1)_t\big) - \Rank\!\Big(\tfrac{P_t - \VWAP_t}{\VWAP_t}\Big)
+&&\text{(volume-lead divergence)}\\[2pt]
+X^{(3)}_t &= -\,\TsRank\!\Big( K_t(n)\,,\ n \Big)\cdot \Rank\!\Big( \big|\Cov(r, V, n)_t\big| \Big)
+&&\text{(range top $\times$ flow coupling)}\\[2pt]
+X^{(4)}_t &= -\,\Rank\!\Big(\tfrac{P_t-\VWAP_t}{\VWAP_t}\Big)\cdot \big(1 - \Rank(V_t)\big)
+&&\text{(low-volume dislocation fade)}\\[2pt]
+X^{(5)}_t &= -\,\Rank\!\Big( \tfrac{\min(P^{\mathrm f}_t,\, P^{\mathrm l}_t) - \operatorname{Min}(P,n)_t}{R_t(n) + \varepsilon} \Big)
+&&\text{(lower shadow, with $P^{\mathrm f},P^{\mathrm l}$ first/last prints)}\\[2pt]
+X^{(6)}_t &= -\,\sgn\big(\Delta(P,1)_t\big)\cdot \TsRank\big(\Delta(P,k)_t,\, n\big)
+&&\text{(sign-conditional fade)}
+\end{align}}
+Two structural lessons from the mining papers matter more than any single expression. First, alphas are evaluated and admitted \emph{as a pool}: the objective is the performance of the optimized linear combination, with mutual-correlation penalties, not individual information coefficients (Algorithm~\ref{alg:pool}). Second, the miners' libraries saturate: after $\sim$100 admitted factors, new candidates are near-duplicates --- diminishing returns are structural, so a bond implementation should expect a small number of genuinely distinct families (roughly the sections of this document).
+
+%======================================================================
+\section{Reproduction algorithms}\label{sec:algos}
+
+All algorithms are stated language-agnostically; no code. Throughout, ``bar'' means an aggregation of the tape under a chosen clock (Algorithm~1).
+
+\begin{algo}{Clock construction and fallback windows}
+\item Choose a clock: time (fixed $\delta$), volume (fixed par amount $V^\ast$), or transaction (fixed count $k$). For bonds prefer volume or transaction clocks for flow features and time clocks for calendar-aligned fair values.
+\item For each observation time $t$ and each nested horizon $\delta_1 < \dots < \delta_W$, collect the prints in the window ending at $t$.
+\item If a window contains no prints, fall back to the next longer horizon; mark the observation missing only if the full-history window is empty.
+\item Record, for every feature, which horizon actually supplied the data --- the realized horizon is itself a staleness feature.
+\end{algo}
+
+\begin{algo}{Decayed signed flow and impact state (F3, F13)}
+\item Fix a half-life grid, e.g.\ $\{1, 5, 21\}$ trading days; convert to decay rates $\beta = \log 2 / \text{half-life}$.
+\item Iterate over prints in time order, updating $F \leftarrow F e^{-\beta \Delta t} + d_k V_k / \text{AmtOutstanding}$ at each print.
+\item For the impact state, estimate $(\lambda, \beta)$ per liquidity bucket: regress the future $h$-day return on $F_t(\beta)$ for each candidate $\beta$ over a grid of horizons $h$; pick the $\beta$ maximizing out-of-sample fit, and set $\lambda$ to the (negated) regression slope rescaled by $(1-e^{-\beta h})$.
+\item Output the factor $X_t = -\lambda F_t(\beta)$ and the de-pressured value $P_t - \lambda F_t(\beta)$.
+\end{algo}
+
+\begin{algo}{Markout labeling and toxicity propensity (F27--F28)}
+\item Choose a markout horizon $G$ (1--5 days) and a materiality threshold $c$ (e.g.\ half the typical effective spread).
+\item For every print, compute the fair value at $t$ and at $t+G$ (F15 median of prints, or composite mid where available); label $y=1$ if the fair value moved in the trade's direction by more than $c$.
+\item Build the feature grid: the eight statistics (vol, trade count, quote-update count, return, log bid depth, log ask depth, spread, imbalance) under each clock and each nested horizon; append level features and, if identity is known, the client's historical toxicity ratio; apply $\sgn(x)\log(1+|x|)$ to signed magnitudes and $\log(1+x)$ to volumes.
+\item Fit any calibrated classifier with strictly walk-forward training (the label needs $G$ of future data --- embargo accordingly).
+\item Score every new print; aggregate propensity-weighted signed volume over a trailing window to obtain the directional factor, and split flow into informed/uninformed components for F30.
+\end{algo}
+
+\begin{algo}{Intensity-ratio (next-side) estimation (F31)}\label{alg:ratio}
+\item Collect the event times of customer buys and sells for the estimation universe (pool sparse bonds within buckets).
+\item At each event, record the covariate vector (imbalance or volume pressure, last sign, signed spread, Hawkes states, decayed flow).
+\item Maximize the multinomial-logistic quasi-likelihood: each event contributes $\log$ of the model probability of the side that occurred; equivalently, fit a logistic regression of the event side on the covariates sampled \emph{at event times}.
+\item Select covariates with an information criterion (BIC-type penalties preferred; AIC over-selects here) or $\ell_1$ penalty; expect interactions ($s\epsilon$) to survive and single-covariate models to be rejected.
+\item Output $X_t = 2\hat p_t - 1$ evaluated continuously between events.
+\end{algo}
+
+\begin{algo}{Sparse fair-value feature selection (Section \ref{sec:fv})}
+\item Extract the full grid: percentiles, min, max, first, last, mean, VWAP, volatility, counts, volumes --- per side and combined, per nested horizon (with fallback), yielding a few hundred candidates.
+\item Standardize features cross-sectionally within date and bucket.
+\item Fit $\ell_1$-penalized regression (or quantile regression if a distributional forecast is wanted) of the $h$-day forward return on the grid, choosing the penalty by walk-forward validation.
+\item Read off the retained features and their importance by summed absolute coefficients across type, horizon, and side; expect percentile/min/max levels at medium horizons to dominate and volume features to be dropped.
+\end{algo}
+
+\begin{algo}{State-conditional moment tables (F33)}
+\item Discretize the state (spread bucket, staleness bucket, last-flow sign) coarsely enough that each cell has hundreds of observations after pooling within liquidity buckets.
+\item Sweep the historical tape once, accumulating per-cell counts and sums for: move indicator at horizon $\delta$, move size, move size at first change, and time to first change.
+\item At prediction time, average the cell estimates over the $k$ nearest states, treating states with opposite imbalance/flow sign as infinitely distant.
+\item Predict in two stages: move vs.\ no-move against a threshold on the conditional probability, then the sign of the conditional mean.
+\end{algo}
+
+\begin{algo}{Pool-level factor combination (mining-style)}\label{alg:pool}
+\item Maintain a factor pool with weights. For each candidate factor, tentatively add it and re-optimize the weights of the linear combination against the target (rank-IC of the combined score with forward returns).
+\item Admit the candidate only if the \emph{pool} objective improves net of a redundancy penalty (e.g.\ cap pairwise factor correlation, or penalize the increase in combination-weight collinearity).
+\item Periodically prune: remove any factor whose deletion does not degrade the pool objective.
+\item Freeze weights on a schedule; all evaluation strictly walk-forward, cross-sectionally within buckets.
+\end{algo}
+
+\begin{algo}{Liquid-to-illiquid propagation (F18)}
+\item Map every bond to its issuer curve; designate the most liquid sibling (highest trailing print count) as the anchor.
+\item Compute all factors on the anchor; assign them to the illiquid siblings, optionally decayed by curve distance (maturity gap).
+\item Additionally compute the sibling's basis to the anchor-implied curve value; use the basis as a convergence factor.
+\item Never propagate in the reverse direction (illiquid-estimated models onto liquid bonds); the generalization is empirically asymmetric.
+\end{algo}
+
+%======================================================================
+\section{Source map}\label{sec:map}
+
+\begin{center}
+\small
+\begin{tabular}{@{}p{5.6cm}lp{6.2cm}@{}}
+\toprule
+Source (as read) & Tag & Factors drawn \\
+\midrule
+Lehalle \& Neuman, \emph{Incorporating signals into optimal trading} & LN & F6 (imbalance as OU signal) \\
+Muni Toke \& Yoshida, \emph{Ratios of Cox-type intensities} & MTY20 & F1, F2, F31 \\
+Muni Toke \& Yoshida, \emph{Marked point processes and intensity ratios} & MTY22 & F4, F31, F32 \\
+Palguna \& Pollak, \emph{Mid-price prediction in a LOB} & PP16 & F8, F23, F33; share-imbalance variant of F6 \\
+Li et al., \emph{Intelligent market making} & LDZ14 & F7; VPIN pointer (F29) \\
+Cartea, Duran-Martin \& S\'anchez-Betancourt, \emph{Detecting toxic flow} & CDS & F24 (quote-update count), F27, F28; clock grid \\
+Cartea \& S\'anchez-Betancourt, \emph{A simple strategy to deal with toxic flow} & CSB & F30 (informed/uninformed decomposition) \\
+Bank, Cartea \& K\"orber, \emph{Optimal execution and speculation with trade signals} & BCK & F3 (flow-driven price changes; liquidity state) \\
+Webster (chapter), \emph{Mathematical models of price impact} & OW/W & F13 (propagator, myopia of impact--alpha link) \\
+Yu et al., \emph{OrderFusion} & OF & F5, F22 (side separation) \\
+Yu et al., \emph{Orderbook feature learning} (electricity) & OFL & F15--F18; Algorithm 5; asymmetric generalization \\
+Yu, Xue, Ao et al., \emph{AlphaGen} (KDD'23) & AG & operator grammar; Algorithm 7 \\
+Ren et al., \emph{RiskMiner} & RM & operand/operator inventory \\
+Wang et al., \emph{FactorMiner} & FM & F9--F12, F14, F19--F21, F25--F26, F34--F36 grid, Section \ref{sec:mined} expressions \\
+Yu, Xue, Ao \& He, \emph{LLM-assisted alpha discovery} & LLM & grammar validation conventions \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Exclusions.} Quote-placement and dealing-strategy mathematics (optimal spreads, inventory controls, HJB systems), execution-scheduling solutions, and broker internalization/externalization policies are out of scope; only the predictive state variables inside those frameworks were retained.
+
+\end{document}

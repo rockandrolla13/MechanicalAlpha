@@ -1,0 +1,2 @@
+inherits: base.yaml
+features: [flow_persistence, last_side, same_side_run_length, log_intensity_ratio]

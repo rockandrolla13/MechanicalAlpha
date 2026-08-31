@@ -1,0 +1,2 @@
+inherits: base.yaml
+features: [leader_follower_pressure, liquidity_control]

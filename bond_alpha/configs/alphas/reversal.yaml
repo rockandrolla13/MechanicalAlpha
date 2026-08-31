@@ -1,0 +1,2 @@
+inherits: base.yaml
+features: [reversal_pressure, liquidity_control, log_notional_control]

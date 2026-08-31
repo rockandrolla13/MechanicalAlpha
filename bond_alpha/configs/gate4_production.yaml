@@ -1,0 +1,10 @@
+inherits: base.yaml
+scenario: calibrated_realism
+frozen_calibration_id: calibration-v1.0.0
+
+paths:
+  processed_root: data/processed
+  model_root: models
+  synthetic_root: data/synthetic
+  truth_root: data/synthetic_truth
+  report_root: reports
