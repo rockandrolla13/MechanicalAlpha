@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import pickle
 import shutil
@@ -24,10 +25,8 @@ from bondalpha.models.linear import fit_logistic, predict_proba
 from bondalpha.splits import assign_time_splits
 from bondalpha.unblind import unblind_run
 from bondalpha.visualization.report import write_alpha_report
-from bondalpha.workflow import run_blinded_workflow
-from bondsim.config import load_config as load_bondsim_config
-from bondsim.io import write_json, write_parquet
-from bondsim.utils.hashing import file_sha256, stable_json_hash
+from mechanical_alpha.hashing import file_sha256, stable_json_hash
+from mechanical_alpha.io import write_json, write_parquet
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -107,8 +106,11 @@ def main(argv: list[str] | None = None) -> int:
         result = unblind_run(Path(args.run), Path(args.truth_root))
         print(f"unblinded matched_truth_rows={result['matched_truth_rows']}")
     elif args.command == "blinded-workflow":
-        result = run_blinded_workflow(
-            load_bondsim_config(args.gate4_config),
+        alpha_workflow = importlib.import_module("bondsim.alpha_workflow")
+        bondsim_config = importlib.import_module("bondsim.config")
+
+        result = alpha_workflow.run_blinded_workflow(
+            bondsim_config.load_config(args.gate4_config),
             load_alpha_config(args.alpha_config),
             gate3_public_root=Path(args.gate3_public_root),
             gate4_run_id=args.gate4_run_id,

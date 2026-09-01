@@ -8,7 +8,7 @@ from typing import Any
 
 import pandas as pd
 
-from bondsim.io import write_json
+from mechanical_alpha.io import write_json
 
 
 def unblind_run(run_dir: Path, truth_root: Path) -> dict[str, Any]:

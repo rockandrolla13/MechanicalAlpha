@@ -8,32 +8,7 @@ from typing import Iterable
 
 import pandas as pd
 
-
-FORBIDDEN_PUBLIC_COLUMNS = frozenset(
-    {
-        "source_bond_id",
-        "source_issuer_id",
-        "latent_fair_value",
-        "ou_pressure",
-        "permanent_impact_state",
-        "ordinary_temporary_impact_state",
-        "planted_large_print_state",
-        "planted_leadlag_state",
-        "latent_mid_without_planted_effects",
-        "latent_mid_with_planted_effects",
-        "transaction_concession",
-        "observation_noise",
-        "hawkes_cluster_id",
-        "hawkes_parent_event_id",
-        "hawkes_generation",
-        "hawkes_edge_class",
-        "is_immigrant",
-        "large_print_threshold",
-        "is_large_print",
-        "source_leader_event_id",
-        "planted_effect_ids",
-    }
-)
+from mechanical_alpha.public_policy import FORBIDDEN_PUBLIC_COLUMNS, assert_public_columns
 
 
 @dataclass(frozen=True)
@@ -103,6 +78,4 @@ def write_monthly_partitions(
 def assert_public_schema_is_clean(columns: Iterable[str]) -> None:
     """Protect public output from truth and source-identifier columns."""
 
-    leaked = sorted(FORBIDDEN_PUBLIC_COLUMNS.intersection(set(columns)))
-    if leaked:
-        raise ValueError(f"public output contains forbidden columns: {leaked}")
+    assert_public_columns(columns)

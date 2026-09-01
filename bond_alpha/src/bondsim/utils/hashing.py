@@ -1,21 +1,20 @@
-"""Stable hashes for manifests."""
+"""Stable hashes for manifests.
+
+Compatibility wrapper around the neutral MechanicalAlpha hash helpers.
+"""
 
 from __future__ import annotations
 
-import hashlib
-import json
 from pathlib import Path
 from typing import Any
 
+from mechanical_alpha.hashing import file_sha256 as _file_sha256
+from mechanical_alpha.hashing import stable_json_hash as _stable_json_hash
+
 
 def stable_json_hash(value: Any) -> str:
-    payload = json.dumps(value, sort_keys=True, default=str, separators=(",", ":")).encode()
-    return hashlib.sha256(payload).hexdigest()
+    return _stable_json_hash(value)
 
 
 def file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return _file_sha256(path)

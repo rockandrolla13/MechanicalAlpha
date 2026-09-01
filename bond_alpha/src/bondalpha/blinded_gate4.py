@@ -29,8 +29,8 @@ from bondalpha.features import build_features
 from bondalpha.freeze import load_frozen_model, verify_checksums
 from bondalpha.labels import add_public_labels
 from bondalpha.models.linear import predict_proba
-from bondsim.io import write_json, write_parquet
-from bondsim.utils.hashing import file_sha256, stable_json_hash
+from mechanical_alpha.hashing import file_sha256, stable_json_hash
+from mechanical_alpha.io import write_json, write_parquet
 
 
 REQUIRED_SCENARIOS = {

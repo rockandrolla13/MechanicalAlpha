@@ -10,8 +10,8 @@ from typing import Any
 
 import yaml
 
-from bondsim.io import write_json
-from bondsim.utils.hashing import file_sha256, stable_json_hash
+from mechanical_alpha.hashing import file_sha256, stable_json_hash
+from mechanical_alpha.io import write_json
 
 
 def freeze_alpha_spec(run_dir: Path, frozen_root: Path = Path("models/alpha_frozen"), *, force: bool = False) -> Path:

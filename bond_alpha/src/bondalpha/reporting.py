@@ -7,7 +7,7 @@ from typing import Any
 
 import pandas as pd
 
-from bondsim.io import write_json
+from mechanical_alpha.io import write_json
 
 
 REPORT_NAMES = {

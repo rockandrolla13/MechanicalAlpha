@@ -5,23 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 
-
-TRUTH_PATH_TOKENS = ("synthetic_truth", "truth", "event_truth", "parameter_truth")
-TRUTH_COLUMN_TOKENS = ("truth", "latent_", "planted_", "hawkes_parent", "hawkes_cluster")
+from mechanical_alpha.public_policy import (
+    TRUTH_COLUMN_TOKENS,
+    TRUTH_PATH_TOKENS,
+    assert_no_truth_columns as _assert_no_truth_columns,
+    assert_public_path as _assert_public_path,
+)
 
 
 def assert_public_path(path: str | Path) -> None:
-    text = str(path).lower()
-    for token in TRUTH_PATH_TOKENS:
-        if token in text:
-            raise PermissionError(f"alpha code may not read truth path: {path}")
+    _assert_public_path(path)
 
 
 def assert_no_truth_columns(columns: Iterable[str]) -> None:
-    bad = []
-    for column in columns:
-        lower = str(column).lower()
-        if any(token in lower for token in TRUTH_COLUMN_TOKENS):
-            bad.append(str(column))
-    if bad:
-        raise PermissionError(f"alpha code received forbidden truth columns: {bad}")
+    _assert_no_truth_columns(columns)

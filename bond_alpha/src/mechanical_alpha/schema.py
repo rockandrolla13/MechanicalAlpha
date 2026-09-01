@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from mechanical_alpha.public_policy import SOURCE_IDENTIFIER_COLUMNS, TRUTH_FORBIDDEN_COLUMNS
+
 
 class Availability(str, Enum):
     """Availability state for a canonical input or factor."""
@@ -99,33 +101,5 @@ EXTERNAL_FACTORS_SCHEMA = TableSchema(
     name="external_factors",
     required=("timestamp", "factor_id", "value"),
     optional=("publication_timestamp", "revision_timestamp", "source"),
-)
-
-TRUTH_FORBIDDEN_COLUMNS = frozenset(
-    {
-        "truth",
-        "truth_label",
-        "latent_fair_value",
-        "latent_mid",
-        "latent_mid_with_planted_effects",
-        "latent_mid_without_planted_effects",
-        "planted_effect_ids",
-        "planted_large_print_state",
-        "planted_leadlag_state",
-        "hawkes_parent_event_id",
-        "hawkes_cluster_id",
-    }
-)
-
-SOURCE_IDENTIFIER_COLUMNS = frozenset(
-    {
-        "source_bond_id",
-        "source_issuer_id",
-        "cusip",
-        "isin",
-        "client_id",
-        "dealer_id",
-        "account_id",
-    }
 )
 

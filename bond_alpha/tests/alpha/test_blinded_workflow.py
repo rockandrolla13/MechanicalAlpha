@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 
 from bondalpha.config import AlphaFactoryConfig, AlphaModelConfig, AlphaPaths
-from bondalpha.workflow import run_blinded_workflow
+from bondsim.alpha_workflow import run_blinded_workflow
 from bondsim.config import load_config
 
 
@@ -12,7 +12,7 @@ def test_blinded_workflow_order_with_existing_gate4_run(tmp_path, monkeypatch):
     gate4_config = load_config("configs/gate4.yaml")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        "bondalpha.workflow.verify_gate4_preconditions",
+        "bondsim.alpha_workflow.verify_gate4_preconditions",
         lambda config: {
             "gate3_decision": "PASS",
             "calibration_id": "calibration-v1.0.0",
