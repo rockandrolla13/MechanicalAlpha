@@ -1,0 +1,18 @@
+factor_id: par_adjusted_spread_curve
+horizons: [1d, 5d]
+spread_unit: bps
+coupon_unit: percent
+rpv01_unit: price_per_decimal
+output_unit: price_points
+timestamp_column: timestamp
+publication_timestamp_column: publication_timestamp
+bond_id_column: bond_id
+issuer_id_column: issuer_id
+curve_id_column: curve_id
+tenor_column: tenor_years
+maturity_column: years_to_maturity
+par_adjusted_spread_column: par_adjusted_spread
+model_par_spread_column: model_par_spread
+risky_pv01_column: risky_pv01
+coupon_minus_riskfree_column: coupon_minus_riskfree
+min_curve_points: 2

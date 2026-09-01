@@ -28,6 +28,8 @@ def load_synthetic_bundle(scenario_root: str | Path) -> AlphaInputBundle:
 
     raw_bonds = pd.read_parquet(bonds_path)
     raw_events = pd.concat([pd.read_parquet(path) for path in trade_paths], ignore_index=True)
+    external_factors_path = root / "external_factors.parquet"
+    external_factors = pd.read_parquet(external_factors_path) if external_factors_path.exists() else None
 
     bonds = _canonicalize_synthetic_bonds(raw_bonds)
     events = _canonicalize_synthetic_events(raw_events)
@@ -52,7 +54,13 @@ def load_synthetic_bundle(scenario_root: str | Path) -> AlphaInputBundle:
         "fair_value": FieldStatus("fair_value", Availability.UNAVAILABLE, None, "Public synthetic output excludes latent truth."),
         "spread": FieldStatus("spread", Availability.UNAVAILABLE),
     }
-    return bundle_from_frames(bonds=bonds, events=events, metadata=metadata, availability=availability)
+    return bundle_from_frames(
+        bonds=bonds,
+        events=events,
+        metadata=metadata,
+        availability=availability,
+        external_factors=external_factors,
+    )
 
 
 def _canonicalize_synthetic_bonds(raw: pd.DataFrame) -> pd.DataFrame:

@@ -24,22 +24,37 @@ class TripletEstimate:
     selected: bool = False
 
 
-def estimate_triplet_family(panel: pd.DataFrame, *, group_cols: tuple[str, ...] = ("lag", "anchor", "horizon", "target_type")) -> pd.DataFrame:
+def estimate_triplet_family(
+    panel: pd.DataFrame,
+    *,
+    group_cols: tuple[str, ...] = ("lag", "anchor", "horizon", "target_type"),
+    theta_registry: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Estimate Spearman dependence for every searched triplet candidate."""
 
-    if panel.empty:
-        return pd.DataFrame(columns=[*group_cols, "rho", "p_value", "n_obs"])
+    if panel.empty and theta_registry is None:
+        return pd.DataFrame(columns=[*group_cols, "rho", "p_value", "n_obs", "effective_n"])
     rows: list[dict[str, object]] = []
-    for key, group in panel.groupby(list(group_cols), dropna=False, sort=True):
-        clean = group[["past_move", "future_move"]].dropna()
+    if theta_registry is None:
+        candidates = panel[list(group_cols)].drop_duplicates().sort_values(list(group_cols), kind="mergesort")
+    else:
+        candidates = theta_registry[list(group_cols)].drop_duplicates().sort_values(list(group_cols), kind="mergesort")
+    for candidate in candidates.to_dict("records"):
+        if panel.empty:
+            group = panel
+        else:
+            mask = pd.Series(True, index=panel.index)
+            for column in group_cols:
+                mask &= panel[column].eq(candidate[column])
+            group = panel.loc[mask]
+        clean = group[["past_move", "future_move"]].dropna() if not group.empty else pd.DataFrame(columns=["past_move", "future_move"])
         if len(clean) < 3 or clean["past_move"].nunique() < 2 or clean["future_move"].nunique() < 2:
             rho, p_value = np.nan, 1.0
         else:
             stat = spearmanr(clean["past_move"], clean["future_move"])
             rho = float(stat.statistic)
             p_value = float(stat.pvalue) if np.isfinite(stat.pvalue) else 1.0
-        key_tuple = key if isinstance(key, tuple) else (key,)
-        rows.append({**dict(zip(group_cols, key_tuple, strict=True)), "rho": rho, "p_value": p_value, "n_obs": int(len(clean))})
+        rows.append({**candidate, "rho": rho, "p_value": p_value, "n_obs": int(len(clean)), "effective_n": int(len(clean))})
     return pd.DataFrame(rows)
 
 
@@ -79,4 +94,3 @@ def select_triplets(estimates: pd.DataFrame, *, alpha: float = 0.05, min_obs: in
         frame = adjust_triplet_multiplicity(frame)
     frame["selected"] = (frame["adjusted_p_value"] <= alpha) & (frame["n_obs"] >= min_obs) & frame["rho"].notna()
     return frame
-

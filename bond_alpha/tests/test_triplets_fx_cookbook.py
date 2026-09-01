@@ -133,6 +133,52 @@ def test_portfolio_primitives_handle_zero_denominators_and_neutrality() -> None:
     assert bounded.min() >= -0.4
 
 
+def test_portfolio_primitives_honor_eligibility_mask() -> None:
+    signal = pd.Series({"a": 2.0, "b": -1.0, "c": 0.5})
+    vol = pd.Series({"a": 1.0, "b": 1.0, "c": 1.0})
+    eligible = pd.Series({"a": True, "b": False, "c": True})
+
+    inv = inverse_volatility_sign_weights(signal, vol, eligible=eligible)
+    prop = signal_proportional_weights(signal, eligible=eligible)
+    rank = equal_weight_rank_halves(signal, eligible=eligible)
+    linear = linear_rank_halves(signal, eligible=eligible)
+
+    assert inv.loc["b"] == 0.0
+    assert prop.loc["b"] == 0.0
+    assert rank.loc["b"] == 0.0
+    assert linear.loc["b"] == 0.0
+    assert math.isclose(inv.abs().sum(), 1.0)
+    assert math.isclose(prop.abs().sum(), 1.0)
+
+
+def test_triplet_multiplicity_ledger_includes_empty_searched_candidates() -> None:
+    panel = pd.DataFrame(
+        {
+            "lag": [1, 1, 1],
+            "anchor": [0, 0, 0],
+            "horizon": [1, 1, 1],
+            "target_type": ["clean_price"] * 3,
+            "past_move": [1.0, 2.0, 3.0],
+            "future_move": [1.0, 2.0, 3.0],
+        }
+    )
+    theta_registry = pd.DataFrame(
+        {
+            "lag": [1, 2],
+            "anchor": [0, 0],
+            "horizon": [1, 1],
+            "target_type": ["clean_price", "clean_price"],
+        }
+    )
+
+    estimates = estimate_triplet_family(panel, theta_registry=theta_registry)
+
+    missing = estimates[estimates["lag"] == 2].iloc[0]
+    assert len(estimates) == 2
+    assert missing["n_obs"] == 0
+    assert missing["p_value"] == 1.0
+
+
 def test_tranche_rebalance_averages_active_targets() -> None:
     targets = pd.DataFrame({"a": [1.0, 0.0, -1.0], "b": [-1.0, 0.0, 1.0]}, index=pd.RangeIndex(3))
     tranches = tranche_rebalance(targets, tranche_count=2)

@@ -31,20 +31,40 @@ def _normalize_gross(weights: pd.Series, gross: float) -> pd.Series:
     return weights * (float(gross) / denominator)
 
 
-def inverse_volatility_sign_weights(signal: pd.Series, volatility: pd.Series, *, gross: float = 1.0) -> pd.Series:
+def _apply_eligibility(signal: pd.Series, eligible: pd.Series | None) -> pd.Series:
+    if eligible is None:
+        return signal
+    mask = eligible.reindex(signal.index).fillna(False).astype(bool)
+    return signal.where(mask)
+
+
+def inverse_volatility_sign_weights(
+    signal: pd.Series,
+    volatility: pd.Series,
+    *,
+    eligible: pd.Series | None = None,
+    gross: float = 1.0,
+) -> pd.Series:
     """Construct sign weights scaled by inverse volatility."""
 
-    signal = _as_series(signal, name="signal")
+    signal = _apply_eligibility(_as_series(signal, name="signal"), eligible)
     volatility = _as_series(volatility, name="volatility").reindex(signal.index)
     raw = np.sign(signal) / volatility.replace(0.0, np.nan)
     raw = raw.replace([np.inf, -np.inf], np.nan).fillna(0.0)
     return _normalize_gross(raw, gross)
 
 
-def signal_proportional_weights(signal: pd.Series, volatility: pd.Series | None = None, *, vol_power: float = 0.0, gross: float = 1.0) -> pd.Series:
+def signal_proportional_weights(
+    signal: pd.Series,
+    volatility: pd.Series | None = None,
+    *,
+    eligible: pd.Series | None = None,
+    vol_power: float = 0.0,
+    gross: float = 1.0,
+) -> pd.Series:
     """Construct weights proportional to signal, optionally volatility scaled."""
 
-    signal = _as_series(signal, name="signal")
+    signal = _apply_eligibility(_as_series(signal, name="signal"), eligible)
     raw = signal.copy()
     if volatility is not None and vol_power != 0.0:
         volatility = _as_series(volatility, name="volatility").reindex(signal.index)
@@ -53,29 +73,33 @@ def signal_proportional_weights(signal: pd.Series, volatility: pd.Series | None 
     return _normalize_gross(raw, gross)
 
 
-def equal_weight_rank_halves(signal: pd.Series, *, gross: float = 1.0) -> pd.Series:
+def equal_weight_rank_halves(signal: pd.Series, *, eligible: pd.Series | None = None, gross: float = 1.0) -> pd.Series:
     """Long the top half and short the bottom half with equal absolute weights."""
 
-    signal = _as_series(signal, name="signal").dropna()
-    weights = pd.Series(0.0, index=signal.index)
+    original_index = signal.index
+    signal = _apply_eligibility(_as_series(signal, name="signal"), eligible).dropna()
+    weights = pd.Series(0.0, index=original_index)
     if len(signal) < 2:
         return weights * np.nan
     ranks = signal.rank(method="first")
     midpoint = (len(signal) + 1) / 2.0
-    weights.loc[ranks > midpoint] = 1.0
-    weights.loc[ranks < midpoint] = -1.0
+    weights.loc[ranks.index[ranks > midpoint]] = 1.0
+    weights.loc[ranks.index[ranks < midpoint]] = -1.0
     return _normalize_gross(weights, gross)
 
 
-def linear_rank_halves(signal: pd.Series, *, gross: float = 1.0) -> pd.Series:
+def linear_rank_halves(signal: pd.Series, *, eligible: pd.Series | None = None, gross: float = 1.0) -> pd.Series:
     """Construct dollar-neutral weights proportional to centered ranks."""
 
-    signal = _as_series(signal, name="signal").dropna()
+    original_index = signal.index
+    signal = _apply_eligibility(_as_series(signal, name="signal"), eligible).dropna()
     if signal.empty:
-        return pd.Series(dtype=float)
+        return pd.Series(0.0, index=original_index)
     ranks = signal.rank(method="average")
     centered = ranks - ranks.mean()
-    return _normalize_gross(centered, gross)
+    weights = pd.Series(0.0, index=original_index)
+    weights.loc[signal.index] = _normalize_gross(centered, gross)
+    return weights
 
 
 def project_beta_neutral(weights: pd.Series, beta: pd.Series, *, gross: float | None = None) -> pd.Series:
@@ -91,17 +115,28 @@ def project_beta_neutral(weights: pd.Series, beta: pd.Series, *, gross: float | 
     return _normalize_gross(projected, gross) if gross is not None else projected
 
 
-def apply_position_bounds(weights: pd.Series, *, lower: float | pd.Series = -0.05, upper: float | pd.Series = 0.05, gross: float | None = None) -> pd.Series:
+def apply_position_bounds(
+    weights: pd.Series,
+    *,
+    lower: float | pd.Series = -0.05,
+    upper: float | pd.Series = 0.05,
+    gross: float | None = None,
+    max_iterations: int = 20,
+) -> pd.Series:
     """Apply symmetric or instrument-specific position bounds."""
 
     weights = _as_series(weights, name="weights")
     lower_s = pd.Series(lower, index=weights.index, dtype=float) if np.isscalar(lower) else _as_series(lower, name="lower").reindex(weights.index)
     upper_s = pd.Series(upper, index=weights.index, dtype=float) if np.isscalar(upper) else _as_series(upper, name="upper").reindex(weights.index)
-    clipped = weights.clip(lower=lower_s, upper=upper_s)
     if gross is None:
-        return clipped
-    renormalized = _normalize_gross(clipped, gross)
-    return renormalized.clip(lower=lower_s, upper=upper_s)
+        return weights.clip(lower=lower_s, upper=upper_s)
+    current = weights.clip(lower=lower_s, upper=upper_s)
+    for _ in range(max_iterations):
+        before = current.copy()
+        current = _normalize_gross(current, gross).clip(lower=lower_s, upper=upper_s)
+        if np.allclose(before.to_numpy(dtype=float), current.to_numpy(dtype=float), equal_nan=True):
+            break
+    return current
 
 
 def tranche_rebalance(target_weights: pd.DataFrame, *, tranche_count: int) -> pd.DataFrame:
@@ -114,4 +149,3 @@ def tranche_rebalance(target_weights: pd.DataFrame, *, tranche_count: int) -> pd
     ordered = target_weights.sort_index(kind="mergesort")
     tranches = [ordered.shift(i).fillna(0.0) for i in range(tranche_count)]
     return sum(tranches) / float(tranche_count)
-

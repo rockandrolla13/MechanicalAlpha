@@ -1,0 +1,16 @@
+alpha_id: ETF_OPT_POSITIONING
+name: fi_etf_options_positioning
+factor_id: etf_option_position
+signal_window: 28D
+volatility_window_days: 252
+volatility_mode: rolling_imbalance
+min_abs_delta: 0.25
+max_abs_delta: 0.75
+min_ttm_days: 0.0
+max_ttm_days: 365.0
+min_vol_observations: 5
+side_convention: call_notional_minus_put_notional
+point_in_time_rule:
+  timestamp_cutoff: timestamp < prediction_timestamp
+  availability_cutoff: publication_timestamp <= prediction_timestamp
+missing_data_policy: emit_nan_with_quality_flag
