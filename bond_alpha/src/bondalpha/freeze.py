@@ -30,6 +30,7 @@ def freeze_alpha_spec(run_dir: Path, frozen_root: Path = Path("models/alpha_froz
     _write_spec_files(run_dir, target, manifest)
     write_json({"alpha_spec_id": alpha_spec_id, "source_run": str(run_dir), "manifest_hash": stable_json_hash(manifest)}, target / "frozen_spec.json")
     (target / "FROZEN").write_text(alpha_spec_id + "\n")
+    (target / "ALPHA_FROZEN").write_text(alpha_spec_id + "\n")
     _write_checksums(target)
     return target
 

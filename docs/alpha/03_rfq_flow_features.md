@@ -111,12 +111,94 @@ Features:
 - RFQ notional surprise
 - TRACE event-count surprise
 - TRACE notional surprise
+- gross and signed DV01 surprise, when DV01 is present
+- gross and signed CR01 surprise, when CR01 is present
+- issuer-level event, notional, DV01, and CR01 surprise
+- bond share of issuer activity surprise
 - execution-to-inquiry ratio
 - firm-up-to-inquiry ratio
 - TRACE-to-RFQ activity ratio
 
-The baseline is as-of and same-hour only.
-If the prior same-hour baseline has fewer than three observations, the feature is missing.
+The baseline is fitted on the training period only.
+The scoring path uses the frozen fitted baseline for validation, test, and live-style replay.
+
+Default candidate calendar windows:
+
+```text
+5h, 1d, 2d, 5d, 10d, 20d, 40d
+```
+
+Default RFQ event windows:
+
+```text
+last 5, last 10, last 25, last 50 RFQs
+```
+
+Default TRACE or execution windows:
+
+```text
+last 5, last 10, last 25, last 50 trades
+```
+
+The fitted baseline first attempts a simple Poisson GLM for count targets when the training sample is large enough.
+The GLM uses training-only context columns:
+
+```text
+hour, weekday, liquidity_bucket, rating_bucket, sector, maturity_bucket
+```
+
+If the GLM is sparse, unstable, non-finite, or unavailable, the alpha uses a hierarchical empirical population baseline.
+The empirical baseline falls back through:
+
+```text
+bond -> issuer -> liquidity bucket -> rating/sector/maturity bucket -> global
+```
+
+The primary standardized surprise is:
+
+```text
+(observed_activity - expected_activity) / fitted_residual_scale
+```
+
+Separate activity targets are kept for:
+
+```text
+event_count
+notional
+signed_notional
+gross_dv01
+signed_dv01
+gross_cr01
+signed_cr01
+```
+
+where:
+
+```text
+signed_notional = customer_side * notional
+gross_dv01 = abs(dv01)
+signed_dv01 = customer_side * dv01
+gross_cr01 = abs(cr01)
+signed_cr01 = customer_side * cr01
+```
+
+Issuer fields use the same calculations aggregated across all bonds with the same `issuer_id`.
+Bond-versus-issuer fields compare the bond's observed share of issuer activity with its frozen expected share.
+Ratio features compare observed ratios with frozen expected ratios fitted on the training period.
+
+The current ratios are:
+
+```text
+execution_to_inquiry
+firmup_to_inquiry
+trace_to_rfq
+```
+
+If DV01 or CR01 is missing, the corresponding feature is missing with a quality flag.
+The feature does not silently replace missing risk with notional.
+Static bond-level DV01 or CR01 can be used only when the alpha config explicitly declares the unit policy.
+For example, a `per_1mm_notional` setting scales the static risk by the event notional.
+The default config disables this fallback.
 
 ### A6 Spread-Conditioned Flow Pressure
 
@@ -168,6 +250,7 @@ When bond metadata are supplied, group coverage is attached for available rating
 
 - The implementation is deterministic and local.
 - It is intentionally not optimized for very large production panels yet.
-- It does not fit models.
+- A5 fits an activity baseline model.
+- The other A-family flow features remain deterministic formulas.
 - It does not calculate labels.
 - TRACE side must be validated before TRACE signed features are treated as observed customer-side features.

@@ -2,9 +2,9 @@
 
 Simulator version: `0.1.0`
 
-Scenario: `leadlag_only`
+Scenario: `controlled_null`
 
-Config hash: `fa92951b3a4c12b56e4931b143ed26fa919d13708d3be31e2df419f676a91d3c`
+Config hash: `05d3d74c214db0a473b5063532651da6e756be7e2bbe70866fc35318a109cf55`
 
 ## Data And Units
 
@@ -22,17 +22,17 @@ Config hash: `fa92951b3a4c12b56e4931b143ed26fa919d13708d3be31e2df419f676a91d3c`
 
 ## Liquidity
 
-- Realized median events per bond-session: `2.070767`
-- Realized p10 events per bond-session: `0.532937`
-- Realized max events per bond-session: `25.588624`
+- Realized median events per bond-session: `1.952381`
+- Realized p10 events per bond-session: `0.420635`
+- Realized max events per bond-session: `25.955026`
 
 ## Hawkes Clock
 
 - Same-side mass: `0.1`
 - Opposite-side mass: `0.1`
-- Leader-follower mass: `0.03`
+- Leader-follower mass: `0.0`
 - Half-lives in minutes: `(5.0, 30.0, 120.0)`
-- Spectral radius: `0.20000000033354393`
+- Spectral radius: `0.2`
 
 ## Controlled Effects
 

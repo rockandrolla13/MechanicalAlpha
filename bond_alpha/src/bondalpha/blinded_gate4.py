@@ -21,6 +21,8 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from bondalpha.access_guard import assert_no_truth_columns, assert_public_path
 from bondalpha.features import build_features
@@ -83,11 +85,15 @@ def run_strict_blinded_gate4_evaluation(
         trades = _read_public_trades(scenario.trade_paths, scenario.scenario)
         labeled = add_public_labels(trades, [horizon])
         features = build_features(labeled)
+        features["seed"] = scenario.seed
         predictions = features[["event_id", "scenario", "timestamp_utc", "synthetic_bond_id"]].copy()
+        predictions["seed"] = scenario.seed
         predictions["alpha_score"] = predict_proba(fitted, features)
         predictions["target"] = target
         predictions["alpha_spec_id"] = alpha_spec_root.name
         labels = labeled[["event_id", target]].copy()
+        labels["scenario"] = scenario.scenario
+        labels["seed"] = scenario.seed
 
         feature_path = write_parquet(features, run_dir / "features" / f"{scenario.seed}_{scenario.scenario}.parquet")
         label_path = write_parquet(labels, run_dir / "labels" / f"{scenario.seed}_{scenario.scenario}.parquet")
@@ -112,12 +118,12 @@ def run_strict_blinded_gate4_evaluation(
 
     metrics_frame = pd.DataFrame(metric_rows).sort_values(["seed", "scenario"]).reset_index(drop=True)
     partition_frame = pd.DataFrame(partition_rows).sort_values(["seed", "scenario"]).reset_index(drop=True)
-    write_parquet(metrics_frame, run_dir / "metrics" / "scenario_metrics.parquet")
-    write_parquet(partition_frame, run_dir / "metrics" / "partition_outputs.parquet")
+    _write_report_table(metrics_frame, run_dir / "metrics" / "scenario_metrics.parquet")
+    _write_report_table(partition_frame, run_dir / "metrics" / "partition_outputs.parquet")
     coefficients = _coefficients(fitted)
-    write_parquet(coefficients, run_dir / "coefficients" / "model_coefficients.parquet")
+    _write_report_table(coefficients, run_dir / "coefficients" / "model_coefficients.parquet")
     plot_data = pd.concat(prediction_samples, ignore_index=True) if prediction_samples else pd.DataFrame()
-    write_parquet(plot_data, run_dir / "plot_data" / "prediction_score_distribution.parquet")
+    _write_report_table(plot_data, run_dir / "plot_data" / "prediction_score_distribution.parquet")
     _write_score_plot(plot_data, run_dir / "figures" / "prediction_score_distribution.png")
 
     report = {
@@ -204,12 +210,18 @@ def _gate4_manifest_for(public_root: Path) -> dict[str, Any] | None:
 
 
 def _scenario_roots(public_root: Path) -> list[Path]:
+    roots: list[Path] = []
     if public_root.name.startswith("scenario="):
-        return [public_root]
-    direct = sorted(path for path in public_root.glob("scenario=*") if path.is_dir())
-    if direct:
-        return direct
-    return sorted(path for path in public_root.glob("seed=*/synthetic/scenario=*") if path.is_dir())
+        roots.append(public_root)
+    roots.extend(sorted(path for path in public_root.glob("scenario=*") if path.is_dir()))
+    roots.extend(sorted(path for path in public_root.glob("seed=*/synthetic/scenario=*") if path.is_dir()))
+    seen: set[Path] = set()
+    unique = []
+    for root in roots:
+        if root not in seen:
+            unique.append(root)
+            seen.add(root)
+    return unique
 
 
 def _verify_manifest_files(manifest: dict[str, Any], trade_paths: tuple[Path, ...]) -> None:
@@ -319,6 +331,17 @@ def _write_score_plot(plot_data: pd.DataFrame, path: Path) -> None:
     plt.tight_layout()
     plt.savefig(path)
     plt.close()
+
+
+def _write_report_table(frame: pd.DataFrame, path: Path) -> Path:
+    """Write small audit/report tables in a conservative Parquet encoding."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    table = pa.Table.from_pandas(frame.reset_index(drop=True), preserve_index=False)
+    pq.write_table(table, tmp, compression=None, version="1.0", use_dictionary=False)
+    tmp.replace(path)
+    return path
 
 
 def _acceptance(metrics: pd.DataFrame) -> dict[str, Any]:

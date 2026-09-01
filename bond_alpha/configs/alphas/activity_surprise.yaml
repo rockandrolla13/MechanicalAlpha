@@ -1,0 +1,69 @@
+alpha_id: A5
+name: fitted_activity_surprise
+model_type: auto
+calendar_windows:
+  - 5h
+  - 1d
+  - 2d
+  - 5d
+  - 10d
+  - 20d
+  - 40d
+rfq_event_windows:
+  - 5
+  - 10
+  - 25
+  - 50
+trade_event_windows:
+  - 5
+  - 10
+  - 25
+  - 50
+event_types:
+  - inquiry
+  - firmup
+  - execution
+  - trace_trade
+pooling_levels:
+  - bond
+  - issuer
+  - liquidity
+  - rating_sector_maturity
+  - global
+minimum_observations: 3
+epsilon: 1.0e-12
+winsorization: 0.99
+train_validation_split:
+  train_fraction: 0.70
+  validation_fraction: 0.15
+selection_metric: validation_standardized_error
+selected_windows:
+  calendar_windows:
+    - 5h
+    - 1d
+    - 2d
+    - 5d
+    - 10d
+    - 20d
+    - 40d
+  rfq_event_windows:
+    - 5
+    - 10
+    - 25
+    - 50
+  trade_event_windows:
+    - 5
+    - 10
+    - 25
+    - 50
+frozen_after_fit: true
+risk_measures:
+  static_risk_unit:
+  rate_risk:
+    preferred: dv01
+    allow_static_bond_fallback: false
+    fallback: duration_notional_only_when_units_are_documented
+  credit_risk:
+    preferred: cr01
+    allow_static_bond_fallback: false
+    fallback: unavailable_without_documented_spread_duration

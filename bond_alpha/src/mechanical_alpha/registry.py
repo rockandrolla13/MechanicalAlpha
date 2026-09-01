@@ -29,6 +29,14 @@ ALPHA_INDEX: tuple[AlphaFile, ...] = (
     AlphaFile("A5", "Multi-clock activity surprise", "mechanical_alpha.alphas.A5_activity_surprise", "implemented"),
     AlphaFile("A6", "Spread-conditioned flow pressure", "mechanical_alpha.alphas.A6_spread_conditioned_flow", "implemented"),
     AlphaFile("A16", "RFQ scarcity and disagreement", "mechanical_alpha.alphas.A16_rfq_scarcity_disagreement", "implemented"),
+    AlphaFile("T1", "Triplet momentum/reversal", "mechanical_alpha.alphas.T1_triplet_momentum_reversal", "implemented"),
+    AlphaFile("FX_MOM", "Cookbook price momentum primitives", "mechanical_alpha.fx_cookbook.momentum", "component_only"),
+    AlphaFile("FX_CARRY", "Cookbook carry", "mechanical_alpha.fx_cookbook.carry", "blocked_human"),
+    AlphaFile("FX_VALUE", "Cookbook fundamental value", "mechanical_alpha.fx_cookbook.value", "blocked_human"),
+    AlphaFile("RATES_SPILLOVER", "Rates momentum spill-over", "mechanical_alpha.fx_cookbook.rates_momentum_spillover", "blocked_missing_data"),
+    AlphaFile("COFFEE_DTCC", "COFFEE/DTCC positioning", "mechanical_alpha.fx_cookbook.coffee", "blocked_missing_data"),
+    AlphaFile("CFTC_CONT", "CFTC continuation", "mechanical_alpha.fx_cookbook.cftc_continuation", "blocked_missing_data"),
+    AlphaFile("CFTC_REV", "CFTC reversal", "mechanical_alpha.fx_cookbook.cftc_reversal", "blocked_human"),
 )
 
 
@@ -64,6 +72,14 @@ ALPHA_SPECS: tuple[FactorSpec, ...] = (
     FactorSpec("B13", "Impact-state de-pressured value", ("side", "notional", "price")),
     FactorSpec("B14", "Price-volume rank divergence", ("price", "notional")),
     FactorSpec("B15", "Trade-price percentiles", ("price",)),
+    FactorSpec("T1", "Triplet Momentum/Reversal", ("prediction_timestamp", "price"), optional_fields=("fair_value",), notes="Fitted on train clock panels and scored with frozen selected triplets."),
+    FactorSpec("FX_MOM", "Cookbook Price Momentum", ("price",), optional_fields=("fair_value",), notes="Component primitives implemented; source-literal variants require MOM-001/MOM-002 choices."),
+    FactorSpec("FX_CARRY", "Cookbook Carry", ("fx_forward", "financing_curve"), notes="Blocked pending CARRY-001/CARRY-002/CARRY-003 and PIT inputs."),
+    FactorSpec("FX_VALUE", "Cookbook Fundamental Value", ("reer", "fundamental_value_panel"), notes="Blocked pending VALUE-001 and PIT REER/fundamental inputs."),
+    FactorSpec("RATES_SPILLOVER", "Rates Momentum Spill-Over", ("external_factors:rates", "curve_changes"), notes="Blocked unless PIT rate-factor inputs are provided."),
+    FactorSpec("COFFEE_DTCC", "COFFEE/DTCC Positioning", ("option_delta", "option_ttm", "call_put_notional"), notes="Blocked pending COFFEE-001/COFFEE-002 and DTCC/COFFEE data."),
+    FactorSpec("CFTC_CONT", "CFTC Continuation", ("cftc_report_date", "cftc_net_position"), notes="Blocked because CFTC COT reports are not in the current public bond bundle."),
+    FactorSpec("CFTC_REV", "CFTC Reversal", ("cftc_report_date", "cftc_net_position"), notes="Blocked pending CFTC-R-001 and CFTC COT reports."),
 )
 
 

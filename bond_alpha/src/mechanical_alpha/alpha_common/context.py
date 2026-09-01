@@ -105,6 +105,9 @@ def normalise_rfqs(rfqs: pd.DataFrame | None) -> pd.DataFrame:
     frame["bond_id"] = frame["bond_id"].astype(str)
     frame["side"] = pd.to_numeric(frame["side"], errors="coerce")
     frame["notional"] = pd.to_numeric(frame.get("size", frame.get("notional", np.nan)), errors="coerce")
+    for column in ("dv01", "cr01", "effective_duration", "duration"):
+        if column in frame.columns:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
     if "event_kind" not in frame.columns:
         stage = frame.get("stage", frame.get("rfq_stage", "inquiry"))
         frame["event_kind"] = pd.Series(stage, index=frame.index).fillna("inquiry").astype(str).str.lower()
@@ -117,6 +120,9 @@ def normalise_trace_events(events: pd.DataFrame) -> pd.DataFrame:
     frame["bond_id"] = frame["bond_id"].astype(str)
     frame["side"] = pd.to_numeric(frame["side"], errors="coerce")
     frame["notional"] = pd.to_numeric(frame["notional"], errors="coerce")
+    for column in ("dv01", "cr01", "effective_duration", "duration"):
+        if column in frame.columns:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
     return frame.sort_values(["bond_id", "timestamp"]).reset_index(drop=True)
 
 
@@ -252,4 +258,3 @@ def last_value_percentile(values: pd.Series, latest_value: object) -> float:
     if clean.empty:
         return np.nan
     return float((clean <= float(latest_value)).mean())
-

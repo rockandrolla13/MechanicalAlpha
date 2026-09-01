@@ -1,0 +1,70 @@
+{
+  "audit_date": "2026-09-01",
+  "alpha_surfaces": ["mechanical_alpha", "bondalpha"],
+  "weakest_substantive_alpha_hardened": "issuer_leader_follower",
+  "hardened_files": [
+    "bond_alpha/src/bondalpha/features/leader_follower.py",
+    "bond_alpha/tests/alpha/test_leader_follower_hardening.py"
+  ],
+  "implemented": [
+    "A1",
+    "A2",
+    "A3",
+    "A4",
+    "A5",
+    "A6",
+    "A16",
+    "T1",
+    "large_print_reversal",
+    "own_flow_persistence",
+    "issuer_leader_follower",
+    "issuer_relative_value",
+    "alpha_factory_composite"
+  ],
+  "component_only": ["FX_MOM"],
+  "blocked": [
+    "FX_CARRY",
+    "FX_VALUE",
+    "RATES_SPILLOVER",
+    "COFFEE_DTCC",
+    "CFTC_CONT",
+    "CFTC_REV"
+  ],
+  "unimplemented_registry_declarations": ["A7", "A8", "A9", "A10", "A11", "A12", "A13", "A14", "A15", "B1-B15"],
+  "known_remaining_correctness_issues": [
+    {
+      "alpha": "large_print_reversal",
+      "evidence": "bond_alpha/src/bondalpha/features/reversal.py lines 13-14 use full-sample median and p90 by scenario/bond",
+      "risk": "future notional threshold leakage"
+    },
+    {
+      "alpha": "own_flow_persistence",
+      "evidence": "bond_alpha/src/bondalpha/features/flow_persistence.py lines 14-16 include current event in rolling side counts",
+      "risk": "current event side leakage for pre-event prediction"
+    },
+    {
+      "alpha": "issuer_relative_value",
+      "evidence": "bond_alpha/src/bondalpha/features/relative_value.py lines 11-14 use current price diff and full-scenario robust z-score",
+      "risk": "same-row and future distribution leakage"
+    },
+    {
+      "alpha": "liquidity_control",
+      "evidence": "bond_alpha/src/bondalpha/features/controls.py line 11 uses full-sample event count",
+      "risk": "ex-post activity leakage if used as a point-in-time feature"
+    },
+    {
+      "alpha": "future_issuer_residual_move",
+      "evidence": "bond_alpha/src/bondalpha/target_labels.py lines 19-21 use issuer-group row shift rather than issuer fair-value move",
+      "risk": "incorrect issuer residual label"
+    }
+  ],
+  "bond_support": "Implemented alphas support synthetic and canonical corporate-bond public tables when required fields exist.",
+  "etf_support": "No first-class bond ETF alpha adapter is implemented. ETF support is limited to generic row-dict or external-factor concepts.",
+  "validation_summary": {
+    "unit_tests": "added and passing for hardened leader_follower alpha",
+    "workflow_tests": "existing Alpha Factory and blinded workflow tests exercise synthetic public data",
+    "individual_alpha_validation": "partial; not all implemented alphas have robust economic validation",
+    "frozen_alpha_spec": "alpha-spec-201e04afa128 exists but predates this hardening"
+  }
+}
+

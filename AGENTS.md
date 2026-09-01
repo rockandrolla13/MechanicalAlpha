@@ -3,6 +3,8 @@
 ## Project Context
 Always explain in plain english.
 short clear sentences and not long paragraphs.
+When the user asks for a prompt, provide the prompt directly. Do not add an essay, explanation, or extra commentary unless requested.
+Use a fenced code block when the prompt is meant to be copied.
 Before any implementation you invoke /blueprint and use /ideate, /design and /code review.
 MechanicalAlpha is a research and implementation workspace for anonymous corporate bond RFQ alpha features. The core objective is to transform RFQ events, bond fair values, spread data, issuer metadata, and optional market/news data into leakage-safe predictive features for:
 

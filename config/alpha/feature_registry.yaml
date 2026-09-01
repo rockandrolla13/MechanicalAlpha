@@ -117,26 +117,44 @@ features:
     version: 0.1.0
   - id: A5
     name: Multi-clock activity surprise
-    formula: recent activity minus as-of historical same-hour baseline, divided by baseline scale
+    formula: observed activity minus frozen train-period population baseline, standardized by fitted residual scale
     source_fields:
       - rfqs.timestamp
       - rfqs.size
+      - rfqs.dv01
+      - rfqs.cr01
       - events.prediction_timestamp
       - events.notional
+      - events.dv01
+      - events.cr01
+      - bonds.issuer_id
     clocks:
       - calendar_time
+      - rfq_event_time
+      - trace_transaction_time
     windows:
-      - 30m
-      - 2h
+      - 5h
+      - 1d
+      - 2d
+      - 5d
+      - 10d
+      - 20d
+      - 40d
+      - last_5
+      - last_10
+      - last_25
+      - last_50
     minimum_observations: 3
-    missing_policy: Missing when the source or as-of baseline is too sparse.
-    expected_sign: Positive means activity is above its own time-of-day baseline.
+    missing_policy: Missing with quality flags when the source, DV01, CR01, or frozen baseline is unavailable.
+    expected_sign: Positive means bond or issuer activity is above its frozen population baseline.
     class: liquidity
     point_in_time_dependencies:
       - source event time strictly before prediction timestamp
-      - baseline uses prior same-hour rows only
-    computational_cost: O(prediction_rows * prior_rows)
-    version: 0.1.0
+      - model fit uses training rows only
+      - validation and test rows cannot change frozen fitted baselines
+      - static bond DV01 or CR01 is used only with an explicit unit policy
+    computational_cost: O(prediction_rows * selected_windows * event_types)
+    version: 0.2.0
   - id: A6
     name: Spread-conditioned flow pressure
     formula: flow pressure interacted with latest as-of composite spread, spread percentile, asymmetry, disagreement, staleness, and liquidity bucket

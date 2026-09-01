@@ -64,7 +64,7 @@ def _canonicalize_synthetic_bonds(raw: pd.DataFrame) -> pd.DataFrame:
 def _canonicalize_synthetic_events(raw: pd.DataFrame) -> pd.DataFrame:
     trade_type = raw["trade_type"] if "trade_type" in raw.columns else pd.Series("synthetic", index=raw.index)
     venue = raw["venue_bucket"] if "venue_bucket" in raw.columns else pd.Series("synthetic", index=raw.index)
-    return pd.DataFrame(
+    frame = pd.DataFrame(
         {
             "event_id": raw["event_id"].astype(str),
             "prediction_timestamp": pd.to_datetime(raw["timestamp_utc"]),
@@ -82,3 +82,7 @@ def _canonicalize_synthetic_events(raw: pd.DataFrame) -> pd.DataFrame:
             "venue": venue.astype(str),
         }
     )
+    for column in ("dv01", "cr01", "effective_duration", "duration"):
+        if column in raw.columns:
+            frame[column] = pd.to_numeric(raw[column], errors="coerce")
+    return frame

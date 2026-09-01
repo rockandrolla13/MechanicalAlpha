@@ -65,17 +65,20 @@ def compute_microstructure_features(
     context = build_context(bundle)
     if context.prediction_grid.empty:
         return context.prediction_grid.copy()
-    frames = [
-        compute_from_context(
-            context,
-            module.add_features,
-            event_windows=event_windows,
-            calendar_windows=calendar_windows,
-            ewma_halflives=ewma_halflives,
-            epsilon=epsilon,
+    frames = []
+    for module in ALPHA_MODULES:
+        if module is A5_activity_surprise:
+            frames.append(module.compute(bundle, calendar_windows=tuple(calendar_windows), epsilon=epsilon))
+            continue
+        frames.append(
+            compute_from_context(
+                context,
+                module.add_features,
+                event_windows=event_windows,
+                calendar_windows=calendar_windows,
+                ewma_halflives=ewma_halflives,
+                epsilon=epsilon,
+            )
         )
-        for module in ALPHA_MODULES
-    ]
     keys = ["prediction_timestamp", "bond_id", "issuer_id"]
     return reduce(lambda left, right: left.merge(right, on=keys, how="outer"), frames).sort_values(keys).reset_index(drop=True)
-

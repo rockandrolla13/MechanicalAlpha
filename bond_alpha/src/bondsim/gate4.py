@@ -27,6 +27,9 @@ GATE4_SCENARIOS = [
     "leadlag_only",
 ]
 
+GATE4_EXTRA_FULL_SEED_SCENARIOS = ["controlled_all", "controlled_null"]
+GATE4_EXTRA_FULL_SEED_COUNT = 2
+
 
 def run_gate4(config: BondSimConfig, *, mode: str = "full", force: bool = False) -> dict[str, Any]:
     """Run Gate 4 into quarantined public and truth roots."""
@@ -71,6 +74,49 @@ def run_gate4(config: BondSimConfig, *, mode: str = "full", force: bool = False)
             )
             write_json(payload, truth_manifest)
         manifests.append({"scenario": scenario, "manifest_path": str(result.manifest_path), "rows": manifest.get("rows", {})})
+    extra_seed_manifests: list[dict[str, Any]] = []
+    if mode == "full":
+        for seed_offset in range(1, GATE4_EXTRA_FULL_SEED_COUNT + 1):
+            seed = config.project.master_seed + seed_offset
+            for scenario in GATE4_EXTRA_FULL_SEED_SCENARIOS:
+                scenario_config = copy.deepcopy(config)
+                scenario_config.project.master_seed = seed
+                scenario_config.scenario = scenario
+                scenario_config.paths.synthetic_root = public_root / f"seed={seed}" / "synthetic"
+                scenario_config.paths.truth_root = truth_root / f"seed={seed}" / "synthetic_truth"
+                scenario_config.paths.report_root = report_root / f"seed={seed}" / scenario
+                result = SimulationPipeline(scenario_config).run(mode=mode, scenario=scenario, force=force)
+                manifest = json.loads(result.manifest_path.read_text())
+                manifest["gate4_run_id"] = run_id
+                manifest["gate4_quarantined"] = True
+                manifest["frozen_calibration_id"] = preflight["calibration_id"]
+                manifest["frozen_calibration_path"] = preflight["frozen_path"]
+                manifest["full_scale_extra_seed"] = True
+                manifest["simulation_seed"] = seed
+                write_json(manifest, result.manifest_path)
+                truth_manifest = scenario_config.paths.truth_root / f"scenario={scenario}" / "manifest.json"
+                if truth_manifest.exists():
+                    payload = json.loads(truth_manifest.read_text())
+                    payload.update(
+                        {
+                            "gate4_run_id": run_id,
+                            "gate4_quarantined": True,
+                            "frozen_calibration_id": preflight["calibration_id"],
+                            "frozen_calibration_path": preflight["frozen_path"],
+                            "full_scale_extra_seed": True,
+                            "simulation_seed": seed,
+                        }
+                    )
+                    write_json(payload, truth_manifest)
+                extra_seed_manifests.append(
+                    {
+                        "scenario": scenario,
+                        "seed": seed,
+                        "manifest_path": str(result.manifest_path),
+                        "truth_manifest_path": str(truth_manifest),
+                        "rows": manifest.get("rows", {}),
+                    }
+                )
     decision = {
         "gate4_run_id": run_id,
         "calibration_id": preflight["calibration_id"],
@@ -82,6 +128,7 @@ def run_gate4(config: BondSimConfig, *, mode: str = "full", force: bool = False)
         "quarantined": True,
         "alpha_spec_released": False,
         "scenarios": manifests,
+        "extra_full_seed_scenarios": extra_seed_manifests,
         "preflight": preflight,
     }
     write_json(decision, run_root / "gate4_manifest.json")
@@ -139,6 +186,8 @@ def gate4_run_id(config: BondSimConfig, preflight: dict[str, Any], mode: str) ->
         "n_bonds": config.universe.n_bonds,
         "n_sessions": config.simulation.n_sessions,
         "scenarios": GATE4_SCENARIOS,
+        "extra_full_seed_scenarios": GATE4_EXTRA_FULL_SEED_SCENARIOS if mode == "full" else [],
+        "extra_full_seed_count": GATE4_EXTRA_FULL_SEED_COUNT if mode == "full" else 0,
     }
     return "gate4-" + stable_json_hash(payload)[:16]
 
@@ -204,9 +253,12 @@ def finalize_gate4_run(run_root: Path) -> dict[str, Any]:
 
 
 def _summary_markdown(decision: dict[str, Any]) -> str:
-    rows = "\n".join(
-        f"- {item['scenario']}: {item.get('rows', {})}" for item in decision["scenarios"]
+    rows = "\n".join(f"- {item['scenario']}: {item.get('rows', {})}" for item in decision["scenarios"])
+    extra_rows = "\n".join(
+        f"- seed {item['seed']} / {item['scenario']}: {item.get('rows', {})}"
+        for item in decision.get("extra_full_seed_scenarios", [])
     )
+    extra_section = f"\n## Extra Controlled/Null Seeds\n\n{extra_rows}\n" if extra_rows else ""
     return (
         "# Gate 4 Quarantined Run\n\n"
         f"- run_id: `{decision['gate4_run_id']}`\n"
@@ -216,6 +268,7 @@ def _summary_markdown(decision: dict[str, Any]) -> str:
         f"- quarantined: `{decision['quarantined']}`\n\n"
         "## Scenario Rows\n\n"
         f"{rows}\n"
+        f"{extra_section}"
     )
 
 

@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
+import pyarrow.parquet as pq
 import yaml
 
 from bondsim.calibration.frozen import current_software_environment, load_frozen_calibration
@@ -109,14 +109,18 @@ def audit_public_truth_separation(public_roots: list[Path], truth_roots: list[Pa
     public_columns: dict[str, list[str]] = {}
     truth_columns: dict[str, list[str]] = {}
     for path in public_files:
-        columns = list(pd.read_parquet(path, columns=None).columns)
+        columns = _safe_parquet_columns(path, failures)
+        if columns is None:
+            continue
         public_columns[str(path)] = columns
         leaked = sorted(FORBIDDEN_PUBLIC_COLUMNS.intersection(columns))
         token_leaks = [column for column in columns if _truth_like(column)]
         if leaked or token_leaks:
             failures.append(f"public file has forbidden columns {leaked + token_leaks}: {path}")
     for path in truth_files:
-        truth_columns[str(path)] = list(pd.read_parquet(path, columns=None).columns)
+        columns = _safe_parquet_columns(path, failures)
+        if columns is not None:
+            truth_columns[str(path)] = columns
     overlap = set(public_files).intersection(truth_files)
     if overlap:
         failures.append(f"public and truth partitions overlap: {sorted(map(str, overlap))}")
@@ -197,6 +201,18 @@ def _sample_partitions(roots: list[Path], dataset: str) -> list[Path]:
     for root in roots[:6]:
         files.extend(sorted((root / dataset).glob("year=*/month=*/part-*.parquet"))[:1])
     return files
+
+
+def _parquet_columns(path: Path) -> list[str]:
+    return pq.read_schema(path).names
+
+
+def _safe_parquet_columns(path: Path, failures: list[str]) -> list[str] | None:
+    try:
+        return _parquet_columns(path)
+    except Exception as exc:
+        failures.append(f"parquet schema read failed for {path}: {type(exc).__name__}: {exc}")
+        return None
 
 
 def _truth_like(column: str) -> bool:
