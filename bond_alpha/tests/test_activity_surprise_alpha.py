@@ -1,7 +1,9 @@
 import math
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import yaml
 
 from mechanical_alpha.alphas import A1_rfq_count_imbalance, A5_activity_surprise as A5
 from mechanical_alpha.cli import main as alpha_cli
@@ -111,6 +113,18 @@ def test_a5_default_horizons_split_fast_and_slow_without_5h() -> None:
     assert "5h" not in config.calendar_windows
     assert {"5d", "40d", "120d"}.issubset(set(config.calendar_windows))
     assert config.slow_refit_frequency == "monthly"
+
+
+def test_checked_in_a5_config_matches_default_horizon_contract() -> None:
+    path = Path(__file__).parents[1] / "configs/alphas/activity_surprise.yaml"
+    config = A5.config_from_mapping(yaml.safe_load(path.read_text()))
+
+    assert config.calendar_windows[:2] == ("1d", "3d")
+    assert "5h" not in config.calendar_windows
+    assert "2d" not in config.calendar_windows
+    assert config.selected_calendar_windows[:2] == ("1d", "3d")
+    assert "5h" not in config.selected_calendar_windows
+    assert "2d" not in config.selected_calendar_windows
 
 
 def test_static_risk_fallback_requires_explicit_policy() -> None:

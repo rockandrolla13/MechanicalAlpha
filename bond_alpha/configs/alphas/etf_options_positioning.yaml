@@ -2,6 +2,18 @@ alpha_id: ETF_OPT_POSITIONING
 name: fi_etf_options_positioning
 factor_id: etf_option_position
 signal_window: 28D
+signal_windows:
+  - 5D
+  - 20D
+  - 60D
+variants:
+  - oi_change
+  - volume_pressure
+  - dealer_greeks
+  - composite
+lookthrough_factor_id: etf_bond_lookthrough_weight
+enable_bond_lookthrough: true
+lookthrough_weight_type: cr01
 volatility_window_days: 252
 volatility_mode: rolling_imbalance
 min_abs_delta: 0.25
@@ -9,8 +21,9 @@ max_abs_delta: 0.75
 min_ttm_days: 0.0
 max_ttm_days: 365.0
 min_vol_observations: 5
-side_convention: call_notional_minus_put_notional
+side_convention: calls_positive_puts_negative
 point_in_time_rule:
   timestamp_cutoff: timestamp < prediction_timestamp
   availability_cutoff: publication_timestamp <= prediction_timestamp
+  lookthrough_cutoff: lookthrough.timestamp < prediction_timestamp and lookthrough.publication_timestamp <= prediction_timestamp
 missing_data_policy: emit_nan_with_quality_flag

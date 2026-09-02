@@ -2,9 +2,8 @@ alpha_id: A5
 name: fitted_activity_surprise
 model_type: auto
 calendar_windows:
-  - 5h
   - 1d
-  - 2d
+  - 3d
   - 5d
   - 10d
   - 20d
@@ -39,9 +38,8 @@ train_validation_split:
 selection_metric: validation_standardized_error
 selected_windows:
   calendar_windows:
-    - 5h
     - 1d
-    - 2d
+    - 3d
     - 5d
     - 10d
     - 20d

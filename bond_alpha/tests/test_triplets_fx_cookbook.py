@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import yaml
 
 from mechanical_alpha.alphas import T1_triplet_momentum_reversal
 from mechanical_alpha.cli import main as mechanical_alpha_main
@@ -210,6 +211,43 @@ def test_triplet_alpha_registered_and_computable() -> None:
 
     assert index["T1"].module == "mechanical_alpha.alphas.T1_triplet_momentum_reversal"
     assert "t1_triplet_signal" in result.columns
+
+
+def test_triplet_alpha_config_supports_event_and_information_clocks() -> None:
+    bundle = _bundle()
+    event_config = T1_triplet_momentum_reversal.TripletAlphaConfig(
+        clock_type="event",
+        event_threshold=2,
+        lags=(1,),
+        horizons=(1,),
+        min_obs=3,
+        alpha=1.0,
+    )
+    information_config = T1_triplet_momentum_reversal.TripletAlphaConfig(
+        clock_type="information",
+        information_threshold=200.0,
+        information_activity_column="notional",
+        lags=(1,),
+        horizons=(1,),
+        min_obs=3,
+        alpha=1.0,
+    )
+
+    event_result = T1_triplet_momentum_reversal.compute(bundle, config=event_config)
+    information_result = T1_triplet_momentum_reversal.compute(bundle, config=information_config)
+
+    assert "t1_triplet_signal" in event_result.columns
+    assert "t1_triplet_signal" in information_result.columns
+
+
+def test_triplet_alpha_config_mapping_loads_checked_in_config() -> None:
+    path = Path(__file__).parents[1] / "configs/alphas/triplet_momentum_reversal.yaml"
+    config = T1_triplet_momentum_reversal.config_from_mapping(yaml.safe_load(path.read_text()))
+
+    assert config.clock_type == "calendar"
+    assert config.calendar_frequency == "10min"
+    assert config.lags == (1, 2)
+    assert config.horizons == (1, 2)
 
 
 def test_mechanical_alpha_cli_computes_selected_standalone_alpha(tmp_path: Path) -> None:

@@ -1,0 +1,29 @@
+alpha_id: T1
+name: triplet_momentum_reversal
+model_version: 0.2.0
+clock_type: calendar
+calendar_frequency: 10min
+event_threshold: 10
+information_threshold: 1000000.0
+information_activity_column: notional
+lags:
+  - 1
+  - 2
+horizons:
+  - 1
+  - 2
+anchors:
+  - 0
+target_type: clean_price
+alpha: 0.05
+min_obs: 20
+multiplicity_method: holm
+value_col: price
+train_fraction: 0.70
+point_in_time:
+  fit_uses_training_only: true
+  state_sampling_is_backward_asof: true
+  truth_columns_allowed: false
+blocked_source_literal_decisions:
+  - MOM-001
+  - MOM-002

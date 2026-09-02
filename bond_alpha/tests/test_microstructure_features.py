@@ -1,6 +1,8 @@
 import math
+from pathlib import Path
 
 import pandas as pd
+import yaml
 
 from mechanical_alpha.contracts import SourceMetadata
 from mechanical_alpha.data.bundle import bundle_from_frames
@@ -229,6 +231,24 @@ def test_a6_a16_emit_fast_and_slow_horizon_features() -> None:
     assert "a16_fast_event_last_10_firmup_rate" in a16.columns
     assert "a16_slow_calendar_120d_execution_rate" in a16.columns
     assert "a16_slow_event_last_50_mean_response_count" in a16.columns
+
+
+def test_checked_in_a6_a16_configs_match_fast_slow_contract() -> None:
+    from mechanical_alpha.alphas import A16_rfq_scarcity_disagreement as A16
+    from mechanical_alpha.alphas import A6_spread_conditioned_flow as A6
+
+    root = Path(__file__).parents[1]
+    a6 = A6.config_from_mapping(yaml.safe_load((root / "configs/alphas/spread_conditioned_flow.yaml").read_text()))
+    a16 = A16.config_from_mapping(yaml.safe_load((root / "configs/alphas/rfq_scarcity_disagreement.yaml").read_text()))
+
+    assert a6.fast_calendar_windows == ("1d", "3d")
+    assert a16.fast_calendar_windows == ("1d", "3d")
+    assert a6.fast_trade_windows == (5, 10)
+    assert a16.fast_rfq_windows == (5, 10)
+    assert a6.slow_trade_windows == (25, 50)
+    assert a16.slow_rfq_windows == (25, 50)
+    assert a6.slow_refit_frequency == "monthly"
+    assert a16.slow_refit_frequency == "monthly"
 
 
 def test_a6_fits_simple_model_from_training_only() -> None:

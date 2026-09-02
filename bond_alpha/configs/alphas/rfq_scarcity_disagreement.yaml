@@ -1,0 +1,32 @@
+alpha_id: A16
+name: fitted_rfq_scarcity_disagreement
+model_version: 0.2.0
+fast_calendar_windows:
+  - 1d
+  - 3d
+slow_calendar_windows:
+  - 5d
+  - 10d
+  - 20d
+  - 40d
+  - 60d
+  - 120d
+fast_rfq_windows:
+  - 5
+  - 10
+slow_rfq_windows:
+  - 25
+  - 50
+target_columns:
+  - executed
+  - firmed_up
+  - responded
+minimum_fit_observations: 10
+regularization_c: 1.0
+slow_refit_frequency: monthly
+point_in_time:
+  fit_uses_training_only: true
+  rfq_timestamp_must_precede_prediction: true
+  score_uses_frozen_parameters: true
+  truth_columns_allowed: false
+side_convention: customer buy = +1, customer sell = -1

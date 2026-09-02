@@ -1,0 +1,36 @@
+alpha_id: A6
+name: fitted_spread_conditioned_flow
+model_version: 0.2.0
+fast_calendar_windows:
+  - 1d
+  - 3d
+slow_calendar_windows:
+  - 5d
+  - 10d
+  - 20d
+  - 40d
+  - 60d
+  - 120d
+fast_trade_windows:
+  - 5
+  - 10
+slow_trade_windows:
+  - 25
+  - 50
+flow_measures:
+  - notional
+  - cr01
+target_columns:
+  - future_clean_price_move
+  - future_issuer_residual_move
+model_type: ridge
+minimum_fit_observations: 10
+regularization_alpha: 1.0
+slow_refit_frequency: monthly
+point_in_time:
+  fit_uses_training_only: true
+  quote_timestamp_must_precede_prediction: true
+  flow_events_must_precede_prediction: true
+  score_uses_frozen_parameters: true
+  truth_columns_allowed: false
+side_convention: customer buy = +1, customer sell = -1
