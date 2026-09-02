@@ -104,6 +104,15 @@ def test_config_mapping_controls_windows_and_static_risk_policy() -> None:
     assert config.static_risk_unit == "per_1mm_notional"
 
 
+def test_a5_default_horizons_split_fast_and_slow_without_5h() -> None:
+    config = A5.ActivitySurpriseConfig()
+
+    assert config.calendar_windows[:2] == ("1d", "3d")
+    assert "5h" not in config.calendar_windows
+    assert {"5d", "40d", "120d"}.issubset(set(config.calendar_windows))
+    assert config.slow_refit_frequency == "monthly"
+
+
 def test_static_risk_fallback_requires_explicit_policy() -> None:
     bundle = _bundle()
     events = bundle.events.drop(columns=["dv01", "cr01"])

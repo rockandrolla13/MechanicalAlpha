@@ -171,7 +171,8 @@ The scoring path uses the frozen fitted baseline for validation, test, and live-
 Default candidate calendar windows:
 
 ```text
-5h, 1d, 2d, 5d, 10d, 20d, 40d
+fast: 1d, 3d
+slow: 5d, 10d, 20d, 40d, 60d, 120d
 ```
 
 Default RFQ event windows:
@@ -245,6 +246,8 @@ The feature does not silently replace missing risk with notional.
 Static bond-level DV01 or CR01 can be used only when the alpha config explicitly declares the unit policy.
 For example, a `per_1mm_notional` setting scales the static risk by the event notional.
 The default config disables this fallback.
+Slow baselines are intended to be refit once per month.
+That monthly refit schedule updates the frozen population baseline without changing historical scores.
 
 ### A6 Spread-Conditioned Flow Pressure
 
@@ -259,8 +262,11 @@ Features:
 - flow pressure multiplied by spread percentile
 - flow pressure multiplied by composite staleness
 - liquidity bucket passthrough
+- fast flow interactions over 1d, 3d, last 5 trades, and last 10 trades
+- slow flow interactions over 5d, 10d, 20d, 40d, 60d, 120d, last 25 trades, and last 50 trades
 
 The quote used is the latest quote strictly before the prediction timestamp.
+Flow is computed separately for notional and CR01 when event-level CR01 is available.
 
 ### A16 RFQ Scarcity And Disagreement
 
@@ -275,9 +281,12 @@ Features:
 - firm-up rate
 - execution rate
 - age of latest executable indication
+- fast RFQ quality rates over 1d, 3d, last 5 RFQs, and last 10 RFQs
+- slow RFQ quality rates over 5d, 10d, 20d, 40d, 60d, 120d, last 25 RFQs, and last 50 RFQs
 
 Unavailable RFQ fields produce missing values.
 They are not inferred from unrelated fields.
+Slow RFQ quality summaries are intended to be refit or refreshed once per month.
 
 ## Diagnostics
 

@@ -176,6 +176,24 @@ def test_a6_a16_optional_fields_are_point_in_time() -> None:
     assert math.isclose(row["a16_execution_rate_last_25"], 1 / 3)
 
 
+def test_a6_a16_emit_fast_and_slow_horizon_features() -> None:
+    from mechanical_alpha.alphas import A16_rfq_scarcity_disagreement as A16
+    from mechanical_alpha.alphas import A6_spread_conditioned_flow as A6
+
+    bundle = _bundle()
+    a6 = A6.compute(bundle)
+    a16 = A16.compute(bundle)
+
+    assert "a6_fast_calendar_1d_notional_flow_pressure" in a6.columns
+    assert "a6_fast_calendar_3d_cr01_flow_pressure" in a6.columns
+    assert "a6_slow_calendar_40d_notional_flow_x_spread" in a6.columns
+    assert "a6_slow_trade_last_50_cr01_quality_flag" in a6.columns
+    assert "a16_fast_calendar_1d_no_response_rate" in a16.columns
+    assert "a16_fast_event_last_10_firmup_rate" in a16.columns
+    assert "a16_slow_calendar_120d_execution_rate" in a16.columns
+    assert "a16_slow_event_last_50_mean_response_count" in a16.columns
+
+
 def test_registry_and_diagnostics_cover_required_families() -> None:
     registry = {item.feature_id: item for item in microstructure_feature_registry()}
     assert {"A1", "A2", "A3", "A4", "A5", "A6", "A16"}.issubset(registry)

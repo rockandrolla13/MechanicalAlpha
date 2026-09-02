@@ -169,17 +169,28 @@ features:
       - rfq_event_time
       - trace_transaction_time
     windows:
-      - 5h
       - 1d
-      - 2d
+      - 3d
       - 5d
       - 10d
       - 20d
       - 40d
+      - 60d
+      - 120d
       - last_5
       - last_10
       - last_25
       - last_50
+    horizon_families:
+      fast:
+        calendar_windows: [1d, 3d]
+        rfq_event_windows: [5, 10]
+        trade_event_windows: [5, 10]
+      slow:
+        calendar_windows: [5d, 10d, 20d, 40d, 60d, 120d]
+        rfq_event_windows: [25, 50]
+        trade_event_windows: [25, 50]
+        refit_frequency: monthly
     minimum_observations: 3
     missing_policy: Missing with quality flags when the source, DV01, CR01, or frozen baseline is unavailable.
     expected_sign: Positive means bond or issuer activity is above its frozen population baseline.
@@ -190,10 +201,10 @@ features:
       - validation and test rows cannot change frozen fitted baselines
       - static bond DV01 or CR01 is used only with an explicit unit policy
     computational_cost: O(prediction_rows * selected_windows * event_types)
-    version: 0.2.0
+    version: 0.3.0
   - id: A6
     name: Spread-conditioned flow pressure
-    formula: flow pressure interacted with latest as-of composite spread, spread percentile, asymmetry, disagreement, staleness, and liquidity bucket
+    formula: fast and slow notional/CR01 flow pressure interacted with latest as-of composite spread, spread percentile, asymmetry, disagreement, staleness, and liquidity bucket
     source_fields:
       - quotes.timestamp
       - quotes.bid
@@ -202,25 +213,45 @@ features:
       - quotes.spread
       - events.side
       - events.notional
+      - events.cr01
       - bonds.liquidity_bucket
     clocks:
       - calendar_time
       - trace_transaction_time
     windows:
       - latest_quote_before_timestamp
-      - trace_last_5
+      - fast_1d
+      - fast_3d
+      - fast_last_5
+      - fast_last_10
+      - slow_5d
+      - slow_10d
+      - slow_20d
+      - slow_40d
+      - slow_60d
+      - slow_120d
+      - slow_last_25
+      - slow_last_50
+    horizon_families:
+      fast:
+        calendar_windows: [1d, 3d]
+        trade_event_windows: [5, 10]
+      slow:
+        calendar_windows: [5d, 10d, 20d, 40d, 60d, 120d]
+        trade_event_windows: [25, 50]
+        refit_frequency: monthly
     minimum_observations: 1
-    missing_policy: Missing for unavailable quote fields. Flow remains available when signed trade flow exists.
-    expected_sign: Positive flow with wide or stale spreads flags directional pressure under weaker liquidity.
+    missing_policy: Missing for unavailable quote fields; CR01 flow is missing when event-level CR01 is absent.
+    expected_sign: Positive flow with wide or stale spreads flags directional risk pressure under weaker liquidity.
     class: liquidity
     point_in_time_dependencies:
       - quote timestamp strictly before prediction timestamp
       - flow events strictly before prediction timestamp
     computational_cost: O(prediction_rows * quote_rows + window_rows)
-    version: 0.1.0
+    version: 0.2.0
   - id: A16
     name: RFQ scarcity and disagreement
-    formula: responder count, scarcity, quote dispersion, latency, no-response rate, firm-up rate, execution rate, and latest executable indication age
+    formula: fast and slow responder scarcity, quote dispersion, latency, no-response rate, firm-up rate, execution rate, and latest executable indication age
     source_fields:
       - rfqs.timestamp
       - rfqs.number_of_dealers
@@ -231,9 +262,29 @@ features:
       - rfqs.executed
     clocks:
       - rfq_event_time
+      - calendar_time
     windows:
       - latest_rfq_before_timestamp
+      - fast_1d
+      - fast_3d
+      - fast_last_5
+      - fast_last_10
+      - slow_5d
+      - slow_10d
+      - slow_20d
+      - slow_40d
+      - slow_60d
+      - slow_120d
       - last_25
+      - slow_last_50
+    horizon_families:
+      fast:
+        calendar_windows: [1d, 3d]
+        rfq_event_windows: [5, 10]
+      slow:
+        calendar_windows: [5d, 10d, 20d, 40d, 60d, 120d]
+        rfq_event_windows: [25, 50]
+        refit_frequency: monthly
     minimum_observations: 1
     missing_policy: Missing for RFQ fields absent from the canonical RFQ table.
     expected_sign: Higher scarcity or disagreement means worse liquidity and more uncertainty.
@@ -241,4 +292,4 @@ features:
     point_in_time_dependencies:
       - RFQ timestamp strictly before prediction timestamp
     computational_cost: O(prediction_rows * window_rows)
-    version: 0.1.0
+    version: 0.2.0

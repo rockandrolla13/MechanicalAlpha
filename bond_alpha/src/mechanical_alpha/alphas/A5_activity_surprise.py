@@ -17,10 +17,12 @@ from mechanical_alpha.alpha_common import EPSILON, FeatureDefinition, build_cont
 from mechanical_alpha.alpha_common.context import AlphaContext, filter_event_kind, key, last_n, prior, within_timedelta
 from mechanical_alpha.contracts import AlphaInputBundle
 
-A5_CALENDAR_WINDOWS = ("5h", "1d", "2d", "5d", "10d", "20d", "40d")
+A5_FAST_CALENDAR_WINDOWS = ("1d", "3d")
+A5_SLOW_CALENDAR_WINDOWS = ("5d", "10d", "20d", "40d", "60d", "120d")
+A5_CALENDAR_WINDOWS = A5_FAST_CALENDAR_WINDOWS + A5_SLOW_CALENDAR_WINDOWS
 A5_RFQ_EVENT_WINDOWS = (5, 10, 25, 50)
 A5_TRADE_EVENT_WINDOWS = (5, 10, 25, 50)
-A5_MODEL_VERSION = "0.2.0"
+A5_MODEL_VERSION = "0.3.0"
 
 _MEASURES = ("notional", "signed_notional", "gross_dv01", "signed_dv01", "gross_cr01", "signed_cr01")
 
@@ -45,6 +47,7 @@ class ActivitySurpriseConfig:
     selected_rfq_event_windows: tuple[int, ...] = A5_RFQ_EVENT_WINDOWS
     selected_trade_event_windows: tuple[int, ...] = A5_TRADE_EVENT_WINDOWS
     frozen_after_fit: bool = True
+    slow_refit_frequency: str = "monthly"
     allow_static_bond_dv01_fallback: bool = False
     allow_static_bond_cr01_fallback: bool = False
     static_risk_unit: str | None = None
@@ -112,7 +115,7 @@ def describe() -> FeatureDefinition:
             "bonds.issuer_id",
         ),
         clock="calendar_time, rfq_event_time, trace_transaction_time",
-        window="5h, 1d, 2d, 5d, 10d, 20d, 40d; last 5/10/25/50 RFQs or trades",
+        window="fast: 1d, 3d, last 5/10 RFQs or trades; slow: 5d, 10d, 20d, 40d, 60d, 120d, last 25/50 RFQs or trades",
         min_observations=3,
         missing_policy="NaN with quality flags when source, risk field, or fitted baseline is unavailable",
         expected_sign="positive means bond or issuer activity is above its frozen population baseline",
@@ -170,6 +173,7 @@ def config_from_mapping(payload: dict[str, object]) -> ActivitySurpriseConfig:
         selected_rfq_event_windows=tuple(int(item) for item in selected.get("rfq_event_windows", payload.get("selected_rfq_event_windows", A5_RFQ_EVENT_WINDOWS))) if isinstance(selected, dict) else A5_RFQ_EVENT_WINDOWS,
         selected_trade_event_windows=tuple(int(item) for item in selected.get("trade_event_windows", payload.get("selected_trade_event_windows", A5_TRADE_EVENT_WINDOWS))) if isinstance(selected, dict) else A5_TRADE_EVENT_WINDOWS,
         frozen_after_fit=bool(payload.get("frozen_after_fit", True)),
+        slow_refit_frequency=str(payload.get("slow_refit_frequency", "monthly")),
         allow_static_bond_dv01_fallback=bool(rate_risk.get("allow_static_bond_fallback", payload.get("allow_static_bond_dv01_fallback", False))) if isinstance(rate_risk, dict) else False,
         allow_static_bond_cr01_fallback=bool(credit_risk.get("allow_static_bond_fallback", payload.get("allow_static_bond_cr01_fallback", False))) if isinstance(credit_risk, dict) else False,
         static_risk_unit=payload.get("static_risk_unit") if payload.get("static_risk_unit") is not None else (risk.get("static_risk_unit") if isinstance(risk, dict) else None),
