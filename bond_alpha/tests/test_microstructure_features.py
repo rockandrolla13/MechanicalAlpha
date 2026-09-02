@@ -194,6 +194,61 @@ def test_a6_a16_emit_fast_and_slow_horizon_features() -> None:
     assert "a16_slow_event_last_50_mean_response_count" in a16.columns
 
 
+def test_a6_fits_simple_model_from_training_only() -> None:
+    from mechanical_alpha.alphas import A6_spread_conditioned_flow as A6
+
+    bundle = _fitted_a6_bundle()
+    config = A6.SpreadConditionedFlowConfig(
+        fast_calendar_windows=("1d",),
+        slow_calendar_windows=("5d",),
+        fast_trade_windows=(5,),
+        slow_trade_windows=(25,),
+        minimum_fit_observations=3,
+        target_columns=("future_clean_price_move",),
+    )
+    train_end = pd.Timestamp("2026-01-08 10:00:00")
+
+    artifact = A6.fit(bundle, config=config, train_end=train_end)
+    scored = A6.score(bundle, artifact)
+
+    assert artifact.models["future_clean_price_move"].model_type == "ridge"
+    assert artifact.models["future_clean_price_move"].train_observations >= 3
+    assert "a6_fitted_future_clean_price_move_score" in scored.columns
+
+    mutated = _fitted_a6_bundle()
+    mutated.events.loc[mutated.events["prediction_timestamp"] > train_end, "future_clean_price_move"] = 10_000.0
+    mutated_artifact = A6.fit(mutated, config=config, train_end=train_end)
+    assert artifact.models["future_clean_price_move"] == mutated_artifact.models["future_clean_price_move"]
+
+
+def test_a16_fits_simple_liquidity_model_from_training_only() -> None:
+    from mechanical_alpha.alphas import A16_rfq_scarcity_disagreement as A16
+
+    bundle = _fitted_a16_bundle()
+    config = A16.RFQScarcityConfig(
+        fast_calendar_windows=("1d",),
+        slow_calendar_windows=("5d",),
+        fast_rfq_windows=(5,),
+        slow_rfq_windows=(25,),
+        minimum_fit_observations=3,
+        target_columns=("executed",),
+    )
+    train_end = pd.Timestamp("2026-01-09 10:00:00")
+
+    artifact = A16.fit(bundle, config=config, train_end=train_end)
+    scored = A16.score(bundle, artifact)
+
+    assert artifact.models["executed"].model_type in {"logistic_regression", "constant_fallback"}
+    assert artifact.models["executed"].train_observations >= 3
+    assert "a16_fitted_probability_executed" in scored.columns
+    assert scored["a16_fitted_probability_executed"].dropna().between(0.0, 1.0).all()
+
+    mutated = _fitted_a16_bundle()
+    mutated.rfqs.loc[mutated.rfqs["timestamp"] > train_end, "executed"] = True
+    mutated_artifact = A16.fit(mutated, config=config, train_end=train_end)
+    assert artifact.models["executed"] == mutated_artifact.models["executed"]
+
+
 def test_registry_and_diagnostics_cover_required_families() -> None:
     registry = {item.feature_id: item for item in microstructure_feature_registry()}
     assert {"A1", "A2", "A3", "A4", "A5", "A6", "A16"}.issubset(registry)
@@ -308,3 +363,87 @@ def _intensity_bundle() -> object:
         point_in_time_safety="synthetic fixture",
     )
     return bundle_from_frames(bonds=bonds, events=pd.DataFrame(rows), rfqs=rfqs, metadata=metadata)
+
+
+def _fitted_a6_bundle() -> object:
+    dates = pd.bdate_range("2026-01-02", periods=9)
+    events = pd.DataFrame(
+        {
+            "event_id": [f"a6_{idx}" for idx in range(len(dates))],
+            "prediction_timestamp": [date + pd.Timedelta(hours=10) for date in dates],
+            "bond_id": ["b1"] * len(dates),
+            "issuer_id": ["iss1"] * len(dates),
+            "side": [1, -1, 1, -1, 1, -1, 1, -1, 1],
+            "price": [100.0] * len(dates),
+            "notional": [100.0, 150.0, 200.0, 250.0, 300.0, 350.0, 400.0, 450.0, 500.0],
+            "cr01": [10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0, 45.0, 50.0],
+            "future_clean_price_move": [0.01, -0.02, 0.02, -0.03, 0.03, -0.04, 0.04, -0.05, 0.05],
+        }
+    )
+    quotes = pd.DataFrame(
+        {
+            "quote_id": [f"q{idx}" for idx in range(len(dates))],
+            "timestamp": [date + pd.Timedelta(hours=9) for date in dates],
+            "bond_id": ["b1"] * len(dates),
+            "bid": [99.8] * len(dates),
+            "ask": [100.2 + idx / 100.0 for idx in range(len(dates))],
+            "mid": [100.0] * len(dates),
+            "spread": [0.4 + idx / 100.0 for idx in range(len(dates))],
+            "source_disagreement": [0.01 + idx / 1000.0 for idx in range(len(dates))],
+        }
+    )
+    bonds = pd.DataFrame(
+        {
+            "bond_id": ["b1"],
+            "issuer_id": ["iss1"],
+            "sector": ["industrial"],
+            "rating": ["BBB"],
+            "liquidity_bucket": ["liquid"],
+        }
+    )
+    metadata = SourceMetadata("a6_fit", SideConvention.CUSTOMER, "customer buy = +1", "price", "notional", "fixture")
+    return bundle_from_frames(bonds=bonds, events=events, quotes=quotes, metadata=metadata)
+
+
+def _fitted_a16_bundle() -> object:
+    dates = pd.bdate_range("2026-01-02", periods=10)
+    rfqs = pd.DataFrame(
+        {
+            "rfq_id": [f"a16_{idx}" for idx in range(len(dates))],
+            "timestamp": [date + pd.Timedelta(hours=10) for date in dates],
+            "bond_id": ["b1"] * len(dates),
+            "issuer_id": ["iss1"] * len(dates),
+            "side": [1, -1] * 5,
+            "size": [100.0 + idx for idx in range(len(dates))],
+            "event_kind": ["inquiry"] * len(dates),
+            "response_count": [1, 2, 1, 3, 0, 2, 1, 3, 0, 2],
+            "number_of_dealers": [3] * len(dates),
+            "quote_dispersion": [0.02, 0.01, 0.03, 0.01, 0.05, 0.02, 0.03, 0.01, 0.04, 0.02],
+            "response_latency_ms": [1000, 900, 1200, 800, 1500, 1100, 1300, 700, 1600, 1000],
+            "responded": [True, True, True, True, False, True, True, True, False, True],
+            "firmed_up": [False, True, False, True, False, True, False, True, False, True],
+            "executed": [False, True, False, True, False, True, False, True, False, True],
+        }
+    )
+    events = pd.DataFrame(
+        {
+            "event_id": [f"e{idx}" for idx in range(len(dates))],
+            "prediction_timestamp": [date + pd.Timedelta(hours=10) for date in dates],
+            "bond_id": ["b1"] * len(dates),
+            "issuer_id": ["iss1"] * len(dates),
+            "side": [1, -1] * 5,
+            "price": [100.0] * len(dates),
+            "notional": [100.0] * len(dates),
+        }
+    )
+    bonds = pd.DataFrame(
+        {
+            "bond_id": ["b1"],
+            "issuer_id": ["iss1"],
+            "sector": ["industrial"],
+            "rating": ["BBB"],
+            "liquidity_bucket": ["liquid"],
+        }
+    )
+    metadata = SourceMetadata("a16_fit", SideConvention.CUSTOMER, "customer buy = +1", "price", "notional", "fixture")
+    return bundle_from_frames(bonds=bonds, events=events, rfqs=rfqs, metadata=metadata)

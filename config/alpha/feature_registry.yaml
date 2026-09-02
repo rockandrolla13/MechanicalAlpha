@@ -240,6 +240,18 @@ features:
         calendar_windows: [5d, 10d, 20d, 40d, 60d, 120d]
         trade_event_windows: [25, 50]
         refit_frequency: monthly
+    fitted_model:
+      default_type: ridge
+      optional_type: elastic_net
+      default_targets:
+        - future_clean_price_move
+        - future_issuer_residual_move
+      frozen_parameters:
+        - feature_columns
+        - feature_means
+        - feature_scales
+        - coefficients
+        - intercept
     minimum_observations: 1
     missing_policy: Missing for unavailable quote fields; CR01 flow is missing when event-level CR01 is absent.
     expected_sign: Positive flow with wide or stale spreads flags directional risk pressure under weaker liquidity.
@@ -285,6 +297,20 @@ features:
         calendar_windows: [5d, 10d, 20d, 40d, 60d, 120d]
         rfq_event_windows: [25, 50]
         refit_frequency: monthly
+    fitted_model:
+      default_type: logistic_regression
+      fallback_type: constant_probability
+      default_targets:
+        - responded
+        - firmed_up
+        - executed
+      frozen_parameters:
+        - feature_columns
+        - feature_means
+        - feature_scales
+        - coefficients
+        - intercept
+        - positive_rate
     minimum_observations: 1
     missing_policy: Missing for RFQ fields absent from the canonical RFQ table.
     expected_sign: Higher scarcity or disagreement means worse liquidity and more uncertainty.

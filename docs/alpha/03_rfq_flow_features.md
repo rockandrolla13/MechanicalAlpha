@@ -267,6 +267,18 @@ Features:
 
 The quote used is the latest quote strictly before the prediction timestamp.
 Flow is computed separately for notional and CR01 when event-level CR01 is available.
+A6 also has a fitted scoring path.
+It fits a simple ridge model by default, or elastic net if configured.
+The target columns are configurable.
+The default target names are:
+
+```text
+future_clean_price_move
+future_issuer_residual_move
+```
+
+The fitted A6 model uses training rows only.
+It freezes the feature list, feature means, feature scales, coefficients, and intercept before scoring later rows.
 
 ### A16 RFQ Scarcity And Disagreement
 
@@ -287,6 +299,19 @@ Features:
 Unavailable RFQ fields produce missing values.
 They are not inferred from unrelated fields.
 Slow RFQ quality summaries are intended to be refit or refreshed once per month.
+A16 also has a fitted scoring path.
+It fits a simple logistic regression when the selected target has enough observations and both classes are present.
+Otherwise it uses a constant train-period probability fallback.
+The default fitted targets are:
+
+```text
+responded
+firmed_up
+executed
+```
+
+These are liquidity and execution-quality targets.
+They are not treated as clean-price alpha targets by default.
 
 ## Diagnostics
 

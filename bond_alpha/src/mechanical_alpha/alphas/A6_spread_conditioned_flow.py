@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from sklearn.linear_model import ElasticNet, Ridge
 
 from mechanical_alpha.alpha_common import EPSILON, FeatureDefinition, build_context, compute_from_context
 from mechanical_alpha.alpha_common.context import (
@@ -26,6 +27,7 @@ A6_SLOW_CALENDAR_WINDOWS = ("5d", "10d", "20d", "40d", "60d", "120d")
 A6_FAST_TRADE_WINDOWS = (5, 10)
 A6_SLOW_TRADE_WINDOWS = (25, 50)
 A6_MODEL_VERSION = "0.2.0"
+A6_DEFAULT_TARGETS = ("future_clean_price_move", "future_issuer_residual_move")
 
 
 @dataclass(frozen=True)
@@ -37,8 +39,37 @@ class SpreadConditionedFlowConfig:
     fast_trade_windows: tuple[int, ...] = A6_FAST_TRADE_WINDOWS
     slow_trade_windows: tuple[int, ...] = A6_SLOW_TRADE_WINDOWS
     flow_measures: tuple[str, ...] = ("notional", "cr01")
+    target_columns: tuple[str, ...] = A6_DEFAULT_TARGETS
+    model_type: str = "ridge"
+    minimum_fit_observations: int = 10
+    regularization_alpha: float = 1.0
     slow_refit_frequency: str = "monthly"
     epsilon: float = EPSILON
+
+
+@dataclass(frozen=True)
+class FittedSpreadFlowModel:
+    """Frozen linear model for one A6 target."""
+
+    target: str
+    feature_columns: tuple[str, ...]
+    coefficients: dict[str, float]
+    intercept: float
+    feature_means: dict[str, float]
+    feature_scales: dict[str, float]
+    train_observations: int
+    model_type: str
+    fit_note: str
+
+
+@dataclass(frozen=True)
+class SpreadConditionedFlowArtifact:
+    """Frozen A6 raw-feature model state."""
+
+    config: SpreadConditionedFlowConfig
+    train_end: pd.Timestamp
+    models: dict[str, FittedSpreadFlowModel]
+    model_version: str = A6_MODEL_VERSION
 
 
 def describe() -> FeatureDefinition:
@@ -94,9 +125,46 @@ def config_from_mapping(payload: dict[str, object]) -> SpreadConditionedFlowConf
         fast_trade_windows=tuple(int(item) for item in payload.get("fast_trade_windows", A6_FAST_TRADE_WINDOWS)),
         slow_trade_windows=tuple(int(item) for item in payload.get("slow_trade_windows", A6_SLOW_TRADE_WINDOWS)),
         flow_measures=tuple(str(item) for item in payload.get("flow_measures", ("notional", "cr01"))),
+        target_columns=tuple(str(item) for item in payload.get("target_columns", A6_DEFAULT_TARGETS)),
+        model_type=str(payload.get("model_type", "ridge")),
+        minimum_fit_observations=int(payload.get("minimum_fit_observations", 10)),
+        regularization_alpha=float(payload.get("regularization_alpha", 1.0)),
         slow_refit_frequency=str(payload.get("slow_refit_frequency", "monthly")),
         epsilon=float(payload.get("epsilon", EPSILON)),
     )
+
+
+def fit(
+    bundle: AlphaInputBundle,
+    *,
+    config: SpreadConditionedFlowConfig | None = None,
+    train_end: pd.Timestamp | None = None,
+) -> SpreadConditionedFlowArtifact:
+    """Fit transparent linear A6 target models on training rows only."""
+
+    cfg = config or SpreadConditionedFlowConfig()
+    raw = compute(bundle, config=cfg)
+    train_end = pd.Timestamp(train_end) if train_end is not None else _default_train_end(raw)
+    frame = _attach_event_targets(raw, bundle.events, cfg.target_columns)
+    train = frame[frame["prediction_timestamp"] <= train_end].copy()
+    feature_columns = _model_feature_columns(train)
+    models = {
+        target: _fit_linear_target(train, target, feature_columns, cfg)
+        for target in cfg.target_columns
+        if target in train.columns
+    }
+    return SpreadConditionedFlowArtifact(config=cfg, train_end=train_end, models=models)
+
+
+def score(bundle: AlphaInputBundle, artifact: SpreadConditionedFlowArtifact) -> pd.DataFrame:
+    """Score frozen A6 fitted models without refitting."""
+
+    raw = compute(bundle, config=artifact.config)
+    for target, model in artifact.models.items():
+        raw[f"a6_fitted_{target}_score"] = _predict_linear(raw, model)
+        raw[f"a6_fitted_{target}_model_type"] = model.model_type
+        raw[f"a6_fitted_{target}_fit_note"] = model.fit_note
+    return raw
 
 
 def add_features(
@@ -220,3 +288,85 @@ def _to_timedelta(window: str) -> pd.Timedelta:
     if text.endswith("m") and text[:-1]:
         return pd.Timedelta(float(text[:-1]), unit="m")
     return pd.Timedelta(text)
+
+
+def _default_train_end(frame: pd.DataFrame) -> pd.Timestamp:
+    if frame.empty:
+        return pd.Timestamp.min
+    times = pd.Series(pd.to_datetime(frame["prediction_timestamp"]).sort_values().unique())
+    idx = max(0, min(len(times) - 1, int(np.floor((len(times) - 1) * 0.70))))
+    return pd.Timestamp(times.iloc[idx])
+
+
+def _attach_event_targets(raw: pd.DataFrame, events: pd.DataFrame, targets: tuple[str, ...]) -> pd.DataFrame:
+    if events.empty:
+        return raw.copy()
+    available = [target for target in targets if target in events.columns]
+    if not available:
+        return raw.copy()
+    target_frame = events.copy()
+    target_frame["prediction_timestamp"] = pd.to_datetime(target_frame["prediction_timestamp"], utc=False)
+    target_frame["bond_id"] = target_frame["bond_id"].astype(str)
+    return raw.merge(target_frame[["prediction_timestamp", "bond_id", *available]], on=["prediction_timestamp", "bond_id"], how="left")
+
+
+def _model_feature_columns(frame: pd.DataFrame) -> tuple[str, ...]:
+    columns = [
+        column
+        for column in frame.columns
+        if column.startswith("a6_")
+        and (
+            column.endswith("_flow_pressure")
+            or column.endswith("_flow_x_spread")
+            or column.endswith("_flow_x_spread_percentile")
+            or column.endswith("_flow_x_composite_staleness")
+            or column in {"a6_latest_composite_spread", "a6_latest_spread_percentile", "a6_latest_composite_staleness_seconds"}
+        )
+    ]
+    return tuple(column for column in columns if pd.api.types.is_numeric_dtype(frame[column]))
+
+
+def _fit_linear_target(
+    frame: pd.DataFrame,
+    target: str,
+    feature_columns: tuple[str, ...],
+    config: SpreadConditionedFlowConfig,
+) -> FittedSpreadFlowModel:
+    work = frame[[*feature_columns, target]].replace([np.inf, -np.inf], np.nan)
+    clean = work[work[target].notna()].copy()
+    usable_columns = tuple(column for column in feature_columns if clean[column].notna().any())
+    if len(clean) < config.minimum_fit_observations or not usable_columns:
+        mean = float(clean[target].mean()) if len(clean) else np.nan
+        return FittedSpreadFlowModel(target, (), {}, mean, {}, {}, int(len(clean)), "constant_fallback", "insufficient_training_observations")
+    x = clean[list(usable_columns)].astype(float)
+    y = clean[target].astype(float)
+    means = x.mean().to_dict()
+    scales = x.std(ddof=0).replace(0.0, 1.0).fillna(1.0).to_dict()
+    x_scaled = (x.fillna(pd.Series(means)) - pd.Series(means)) / pd.Series(scales)
+    if config.model_type == "elastic_net":
+        model = ElasticNet(alpha=config.regularization_alpha, l1_ratio=0.25, random_state=0, max_iter=10_000)
+    else:
+        model = Ridge(alpha=config.regularization_alpha)
+    fitted = model.fit(x_scaled, y)
+    coefficients = {column: float(value) for column, value in zip(usable_columns, fitted.coef_, strict=True)}
+    return FittedSpreadFlowModel(
+        target=target,
+        feature_columns=usable_columns,
+        coefficients=coefficients,
+        intercept=float(fitted.intercept_),
+        feature_means={str(k): float(v) for k, v in means.items()},
+        feature_scales={str(k): float(v) for k, v in scales.items()},
+        train_observations=int(len(clean)),
+        model_type=config.model_type,
+        fit_note="train_only_linear_fit",
+    )
+
+
+def _predict_linear(frame: pd.DataFrame, model: FittedSpreadFlowModel) -> np.ndarray:
+    if not model.feature_columns:
+        return np.full(len(frame), model.intercept, dtype=float)
+    x = frame[list(model.feature_columns)].replace([np.inf, -np.inf], np.nan)
+    x = x.fillna(pd.Series(model.feature_means))
+    scaled = (x - pd.Series(model.feature_means)) / pd.Series(model.feature_scales)
+    coefs = np.asarray([model.coefficients[column] for column in model.feature_columns], dtype=float)
+    return np.asarray(model.intercept + scaled.to_numpy(dtype=float) @ coefs, dtype=float)

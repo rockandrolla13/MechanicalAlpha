@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from sklearn.linear_model import LogisticRegression
 
 from mechanical_alpha.alpha_common import EPSILON, FeatureDefinition, build_context, compute_from_context
 from mechanical_alpha.alpha_common.context import AlphaContext, first_existing_value, last_n, prior, within_timedelta
@@ -16,6 +17,7 @@ A16_SLOW_CALENDAR_WINDOWS = ("5d", "10d", "20d", "40d", "60d", "120d")
 A16_FAST_RFQ_WINDOWS = (5, 10)
 A16_SLOW_RFQ_WINDOWS = (25, 50)
 A16_MODEL_VERSION = "0.2.0"
+A16_DEFAULT_TARGETS = ("executed", "firmed_up", "responded")
 
 
 @dataclass(frozen=True)
@@ -26,8 +28,37 @@ class RFQScarcityConfig:
     slow_calendar_windows: tuple[str, ...] = A16_SLOW_CALENDAR_WINDOWS
     fast_rfq_windows: tuple[int, ...] = A16_FAST_RFQ_WINDOWS
     slow_rfq_windows: tuple[int, ...] = A16_SLOW_RFQ_WINDOWS
+    target_columns: tuple[str, ...] = A16_DEFAULT_TARGETS
+    minimum_fit_observations: int = 10
+    regularization_c: float = 1.0
     slow_refit_frequency: str = "monthly"
     epsilon: float = EPSILON
+
+
+@dataclass(frozen=True)
+class FittedRFQQualityModel:
+    """Frozen logistic or fallback model for one RFQ quality target."""
+
+    target: str
+    feature_columns: tuple[str, ...]
+    coefficients: dict[str, float]
+    intercept: float
+    feature_means: dict[str, float]
+    feature_scales: dict[str, float]
+    train_observations: int
+    positive_rate: float
+    model_type: str
+    fit_note: str
+
+
+@dataclass(frozen=True)
+class RFQScarcityArtifact:
+    """Frozen A16 fitted liquidity-quality state."""
+
+    config: RFQScarcityConfig
+    train_end: pd.Timestamp
+    models: dict[str, FittedRFQQualityModel]
+    model_version: str = A16_MODEL_VERSION
 
 
 def describe() -> FeatureDefinition:
@@ -77,9 +108,45 @@ def config_from_mapping(payload: dict[str, object]) -> RFQScarcityConfig:
         slow_calendar_windows=tuple(str(item) for item in payload.get("slow_calendar_windows", A16_SLOW_CALENDAR_WINDOWS)),
         fast_rfq_windows=tuple(int(item) for item in payload.get("fast_rfq_windows", A16_FAST_RFQ_WINDOWS)),
         slow_rfq_windows=tuple(int(item) for item in payload.get("slow_rfq_windows", A16_SLOW_RFQ_WINDOWS)),
+        target_columns=tuple(str(item) for item in payload.get("target_columns", A16_DEFAULT_TARGETS)),
+        minimum_fit_observations=int(payload.get("minimum_fit_observations", 10)),
+        regularization_c=float(payload.get("regularization_c", 1.0)),
         slow_refit_frequency=str(payload.get("slow_refit_frequency", "monthly")),
         epsilon=float(payload.get("epsilon", EPSILON)),
     )
+
+
+def fit(
+    bundle: AlphaInputBundle,
+    *,
+    config: RFQScarcityConfig | None = None,
+    train_end: pd.Timestamp | None = None,
+) -> RFQScarcityArtifact:
+    """Fit simple RFQ quality probabilities on training rows only."""
+
+    cfg = config or RFQScarcityConfig()
+    raw = compute(bundle, config=cfg)
+    train_end = pd.Timestamp(train_end) if train_end is not None else _default_train_end(raw)
+    frame = _attach_rfq_targets(raw, bundle.rfqs, cfg.target_columns)
+    train = frame[frame["prediction_timestamp"] <= train_end].copy()
+    feature_columns = _model_feature_columns(train)
+    models = {
+        target: _fit_logistic_target(train, target, feature_columns, cfg)
+        for target in cfg.target_columns
+        if target in train.columns
+    }
+    return RFQScarcityArtifact(config=cfg, train_end=train_end, models=models)
+
+
+def score(bundle: AlphaInputBundle, artifact: RFQScarcityArtifact) -> pd.DataFrame:
+    """Score frozen A16 fitted RFQ quality models without refitting."""
+
+    raw = compute(bundle, config=artifact.config)
+    for target, model in artifact.models.items():
+        raw[f"a16_fitted_probability_{target}"] = _predict_probability(raw, model)
+        raw[f"a16_fitted_probability_{target}_model_type"] = model.model_type
+        raw[f"a16_fitted_probability_{target}_fit_note"] = model.fit_note
+    return raw
 
 
 def add_features(
@@ -189,3 +256,112 @@ def _to_timedelta(window: str) -> pd.Timedelta:
     if text.endswith("m") and text[:-1]:
         return pd.Timedelta(float(text[:-1]), unit="m")
     return pd.Timedelta(text)
+
+
+def _default_train_end(frame: pd.DataFrame) -> pd.Timestamp:
+    if frame.empty:
+        return pd.Timestamp.min
+    times = pd.Series(pd.to_datetime(frame["prediction_timestamp"]).sort_values().unique())
+    idx = max(0, min(len(times) - 1, int(np.floor((len(times) - 1) * 0.70))))
+    return pd.Timestamp(times.iloc[idx])
+
+
+def _attach_rfq_targets(raw: pd.DataFrame, rfqs: pd.DataFrame | None, targets: tuple[str, ...]) -> pd.DataFrame:
+    if rfqs is None or rfqs.empty:
+        return raw.copy()
+    available = [target for target in targets if target in rfqs.columns]
+    if not available:
+        return raw.copy()
+    target_frame = rfqs.copy()
+    target_frame["prediction_timestamp"] = pd.to_datetime(target_frame["timestamp"], utc=False)
+    target_frame["bond_id"] = target_frame["bond_id"].astype(str)
+    return raw.merge(target_frame[["prediction_timestamp", "bond_id", *available]], on=["prediction_timestamp", "bond_id"], how="left")
+
+
+def _model_feature_columns(frame: pd.DataFrame) -> tuple[str, ...]:
+    columns = [
+        column
+        for column in frame.columns
+        if column.startswith("a16_")
+        and (
+            column.endswith("_rate")
+            or column.endswith("_mean_response_count")
+            or column.endswith("_mean_quote_dispersion")
+            or column.endswith("_mean_latency_ms")
+            or column in {
+                "a16_latest_response_count",
+                "a16_latest_response_scarcity",
+                "a16_latest_dealer_count",
+                "a16_latest_quote_dispersion",
+                "a16_latest_response_latency_ms",
+                "a16_latest_executable_indication_age_seconds",
+            }
+        )
+    ]
+    return tuple(column for column in columns if pd.api.types.is_numeric_dtype(frame[column]))
+
+
+def _fit_logistic_target(
+    frame: pd.DataFrame,
+    target: str,
+    feature_columns: tuple[str, ...],
+    config: RFQScarcityConfig,
+) -> FittedRFQQualityModel:
+    work = frame[[*feature_columns, target]].replace([np.inf, -np.inf], np.nan)
+    clean = work[work[target].notna()].copy()
+    if clean.empty:
+        return FittedRFQQualityModel(target, (), {}, np.nan, {}, {}, 0, np.nan, "constant_fallback", "no_training_observations")
+    usable_columns = tuple(column for column in feature_columns if clean[column].notna().any())
+    y = clean[target].astype(bool).astype(int)
+    positive_rate = float(y.mean())
+    if len(clean) < config.minimum_fit_observations or y.nunique() < 2 or not usable_columns:
+        return FittedRFQQualityModel(
+            target,
+            (),
+            {},
+            _logit(positive_rate),
+            {},
+            {},
+            int(len(clean)),
+            positive_rate,
+            "constant_fallback",
+            "insufficient_or_single_class_training_observations",
+        )
+    x = clean[list(usable_columns)].astype(float)
+    means = x.mean().to_dict()
+    scales = x.std(ddof=0).replace(0.0, 1.0).fillna(1.0).to_dict()
+    x_scaled = (x.fillna(pd.Series(means)) - pd.Series(means)) / pd.Series(scales)
+    model = LogisticRegression(C=config.regularization_c, solver="lbfgs", max_iter=1_000, random_state=0)
+    fitted = model.fit(x_scaled, y)
+    coefficients = {column: float(value) for column, value in zip(usable_columns, fitted.coef_[0], strict=True)}
+    return FittedRFQQualityModel(
+        target=target,
+        feature_columns=usable_columns,
+        coefficients=coefficients,
+        intercept=float(fitted.intercept_[0]),
+        feature_means={str(k): float(v) for k, v in means.items()},
+        feature_scales={str(k): float(v) for k, v in scales.items()},
+        train_observations=int(len(clean)),
+        positive_rate=positive_rate,
+        model_type="logistic_regression",
+        fit_note="train_only_logistic_fit",
+    )
+
+
+def _predict_probability(frame: pd.DataFrame, model: FittedRFQQualityModel) -> np.ndarray:
+    if not model.feature_columns:
+        return np.full(len(frame), _sigmoid(model.intercept), dtype=float)
+    x = frame[list(model.feature_columns)].replace([np.inf, -np.inf], np.nan)
+    x = x.fillna(pd.Series(model.feature_means))
+    scaled = (x - pd.Series(model.feature_means)) / pd.Series(model.feature_scales)
+    coefs = np.asarray([model.coefficients[column] for column in model.feature_columns], dtype=float)
+    return _sigmoid(model.intercept + scaled.to_numpy(dtype=float) @ coefs)
+
+
+def _logit(value: float) -> float:
+    clipped = float(np.clip(value, EPSILON, 1.0 - EPSILON))
+    return float(np.log(clipped / (1.0 - clipped)))
+
+
+def _sigmoid(value: float | np.ndarray) -> np.ndarray:
+    return np.asarray(1.0 / (1.0 + np.exp(-np.clip(value, -40.0, 40.0))), dtype=float)
