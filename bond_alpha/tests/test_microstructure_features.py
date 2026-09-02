@@ -133,6 +133,43 @@ def test_a4_last_side_and_switching_are_hand_calculated() -> None:
     assert math.isclose(later["a4_rfq_last_5_switching_hazard"], 1.0)
 
 
+def test_a4_fits_next_side_and_future_cr01_flow_from_training_only() -> None:
+    from mechanical_alpha.alphas import A4_last_side_persistence as A4
+
+    bundle = _fitted_a4_bundle()
+    config = A4.SidePersistenceConfig(
+        fast_rfq_windows=(5, 10),
+        slow_rfq_windows=(25, 50),
+        fast_trade_windows=(5, 10),
+        slow_trade_windows=(25, 50),
+        future_flow_horizons=("1d", "3d"),
+        minimum_fit_observations=3,
+    )
+    train_end = pd.Timestamp("2026-01-09 10:00:00")
+
+    artifact = A4.fit(bundle, config=config, train_end=train_end)
+    scored = A4.score(bundle, artifact)
+
+    assert artifact.next_side_models["rfq"].model_type in {"logistic_regression", "constant_fallback"}
+    assert artifact.next_side_models["trace"].model_type in {"logistic_regression", "constant_fallback"}
+    assert artifact.signed_flow_models["rfq:1d"].model_type in {"ridge", "constant_fallback"}
+    assert artifact.signed_flow_models["trace:1d"].model_type in {"ridge", "constant_fallback"}
+    assert "a4_rfq_last_50_fraction_same_as_last" in scored.columns
+    assert "a4_fitted_next_rfq_side_buy_probability" in scored.columns
+    assert "a4_fitted_future_rfq_signed_cr01_flow_1d_score" in scored.columns
+    assert scored["a4_fitted_next_rfq_side_buy_probability"].dropna().between(0.0, 1.0).all()
+
+    mutated = _fitted_a4_bundle()
+    mutated.rfqs.loc[mutated.rfqs["timestamp"] > train_end, "side"] = 1
+    mutated.rfqs.loc[mutated.rfqs["timestamp"] > train_end, "cr01"] = 100_000.0
+    mutated.events.loc[mutated.events["prediction_timestamp"] > train_end, "side"] = -1
+    mutated.events.loc[mutated.events["prediction_timestamp"] > train_end, "cr01"] = 100_000.0
+    mutated_artifact = A4.fit(mutated, config=config, train_end=train_end)
+
+    assert artifact.next_side_models == mutated_artifact.next_side_models
+    assert artifact.signed_flow_models == mutated_artifact.signed_flow_models
+
+
 def test_a3_fits_days_scale_baseline_from_training_only() -> None:
     from mechanical_alpha.alphas import A3_buy_sell_intensity as A3
 
@@ -362,6 +399,48 @@ def _intensity_bundle() -> object:
         size_units="fixture units",
         point_in_time_safety="synthetic fixture",
     )
+    return bundle_from_frames(bonds=bonds, events=pd.DataFrame(rows), rfqs=rfqs, metadata=metadata)
+
+
+def _fitted_a4_bundle() -> object:
+    bonds = pd.DataFrame(
+        {
+            "bond_id": ["b1"],
+            "issuer_id": ["iss1"],
+            "sector": ["industrial"],
+            "rating": ["BBB"],
+            "liquidity_bucket": ["liquid"],
+        }
+    )
+    dates = pd.bdate_range("2026-01-02", periods=10)
+    rows = []
+    for idx, date in enumerate(dates):
+        side = 1 if idx in {0, 1, 2, 4, 5, 7, 8} else -1
+        rows.append(
+            {
+                "event_id": f"a4_t{idx}",
+                "prediction_timestamp": date + pd.Timedelta(hours=10),
+                "bond_id": "b1",
+                "issuer_id": "iss1",
+                "side": side,
+                "price": 100.0,
+                "notional": 100.0 + 10.0 * idx,
+                "cr01": 10.0 + idx,
+            }
+        )
+    rfqs = pd.DataFrame(
+        {
+            "rfq_id": [f"a4_r{idx}" for idx in range(len(rows))],
+            "timestamp": [row["prediction_timestamp"] - pd.Timedelta(minutes=10) for row in rows],
+            "bond_id": ["b1"] * len(rows),
+            "issuer_id": ["iss1"] * len(rows),
+            "side": [row["side"] for row in rows],
+            "size": [row["notional"] for row in rows],
+            "cr01": [row["cr01"] for row in rows],
+            "event_kind": ["inquiry"] * len(rows),
+        }
+    )
+    metadata = SourceMetadata("a4_fit", SideConvention.CUSTOMER, "customer buy = +1", "price", "notional", "fixture")
     return bundle_from_frames(bonds=bonds, events=pd.DataFrame(rows), rfqs=rfqs, metadata=metadata)
 
 

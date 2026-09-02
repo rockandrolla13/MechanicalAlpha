@@ -1,0 +1,39 @@
+alpha_id: A4
+name: fitted_last_side_persistence
+model_version: 0.2.0
+fast_rfq_windows:
+  - 5
+  - 10
+slow_rfq_windows:
+  - 25
+  - 50
+fast_trade_windows:
+  - 5
+  - 10
+slow_trade_windows:
+  - 25
+  - 50
+future_flow_horizons:
+  - 1d
+  - 3d
+target_sources:
+  - rfq
+  - trace
+minimum_fit_observations: 10
+model:
+  next_side: logistic_regression
+  future_signed_cr01_flow: ridge
+fallback:
+  next_side: train_base_rate
+  future_signed_cr01_flow: train_mean_signed_cr01_flow
+regularization:
+  logistic_c: 1.0
+  ridge_alpha: 1.0
+refit:
+  slow_refit_frequency: monthly
+point_in_time:
+  fit_uses_training_only: true
+  future_targets_censored_at_train_end: true
+  score_uses_frozen_parameters: true
+  truth_columns_allowed: false
+side_convention: customer buy = +1, customer sell = -1

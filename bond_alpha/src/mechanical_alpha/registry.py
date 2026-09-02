@@ -46,7 +46,7 @@ ALPHA_SPECS: tuple[FactorSpec, ...] = (
     FactorSpec("A1", "Clock Seasonality Alpha", ("prediction_timestamp", "price"), notes="TRACE proxy only without RFQs."),
     FactorSpec("A2", "Triplet Momentum/Reversal Alpha", ("fair_value",)),
     FactorSpec("A3", "Variance-Ratio Reversal Alpha", ("fair_value",)),
-    FactorSpec("A4", "Low-Volatility Reversal Alpha", ("price",)),
+    FactorSpec("A4", "Last-Side Persistence and Future CR01 Flow Alpha", ("side",), optional_fields=("cr01",), notes="Standalone fitted A4 uses train-only logistic next-side and ridge future signed-CR01-flow models."),
     FactorSpec("A5", "Risk-Appetite-Conditioned Reversal Alpha", ("price", "external_factor_value")),
     FactorSpec("A6", "Curve PCA Momentum Alpha", ("issuer_id", "maturity_date", "yield")),
     FactorSpec("A7", "Curve-To-Level Spillover Alpha", ("issuer_id", "maturity_date", "fair_value")),
