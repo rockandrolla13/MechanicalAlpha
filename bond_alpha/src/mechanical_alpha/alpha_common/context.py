@@ -12,7 +12,7 @@ from mechanical_alpha.contracts import AlphaInputBundle
 
 DEFAULT_EVENT_WINDOWS = (5, 10, 25)
 DEFAULT_CALENDAR_WINDOWS = ("30m", "2h")
-DEFAULT_EWMA_HALFLIVES = ("30m", "2h")
+DEFAULT_EWMA_HALFLIVES = ("1d", "5d", "20d")
 EPSILON = 1.0e-12
 
 

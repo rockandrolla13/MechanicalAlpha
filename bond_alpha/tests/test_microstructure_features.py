@@ -29,6 +29,7 @@ def _bundle() -> object:
             "side": [1, 1, -1],
             "price": [100.0, 100.1, 100.0],
             "notional": [100.0, 300.0, 100.0],
+            "cr01": [10.0, 30.0, 10.0],
         }
     )
     rfqs = pd.DataFrame(
@@ -41,6 +42,7 @@ def _bundle() -> object:
             "issuer_id": ["iss1", "iss1", "iss1"],
             "side": [1, -1, 1],
             "size": [100.0, 300.0, 100.0],
+            "cr01": [10.0, 30.0, 10.0],
             "event_kind": ["inquiry", "firm_up", "execution"],
             "response_count": [2, 1, 0],
             "number_of_dealers": [3, 3, 3],
@@ -85,6 +87,37 @@ def test_a1_a2_use_only_prior_rows() -> None:
     assert first_row["a1_trace_side_valid_last_5_count_imbalance"] != first_row["a1_trace_side_valid_last_5_count_imbalance"]
 
 
+def test_a1_a2_fit_asymmetric_cr01_weights_from_training_only() -> None:
+    from mechanical_alpha.alphas import A1_rfq_count_imbalance as A1
+    from mechanical_alpha.alphas import A2_rfq_notional_imbalance as A2
+
+    bundle = _drifted_cr01_bundle()
+    train_end = pd.Timestamp("2026-01-02 09:45:00")
+    a1_config = A1.CountImbalanceConfig(event_windows=(5,), calendar_windows=("5h",), risk_measures=("count", "cr01"))
+    a2_config = A2.RiskImbalanceConfig(event_windows=(5,), calendar_windows=("5h",), risk_measures=("cr01",), variants=("raw",))
+
+    a1_artifact = A1.fit(bundle, config=a1_config, train_end=train_end)
+    a2_artifact = A2.fit(bundle, config=a2_config, train_end=train_end)
+    a1 = A1.score(bundle, a1_artifact)
+    a2 = A2.score(bundle, a2_artifact)
+
+    row_time = pd.Timestamp("2026-01-02 10:00:00")
+    a1_row = a1[a1["prediction_timestamp"] == row_time].iloc[0]
+    a2_row = a2[a2["prediction_timestamp"] == row_time].iloc[0]
+
+    assert math.isclose(a1_row["a1_trace_side_valid_last_5_count_weighted_imbalance"], 0.0, abs_tol=1e-12)
+    assert math.isclose(a1_row["a1_trace_side_valid_last_5_cr01_weighted_imbalance"], 0.0, abs_tol=1e-12)
+    assert math.isclose(a2_row["a2_trace_side_valid_last_5_cr01_raw_imbalance"], 0.0, abs_tol=1e-12)
+    assert a1_row["a1_trace_side_valid_last_5_count_buy_weight"] < a1_row["a1_trace_side_valid_last_5_count_sell_weight"]
+    assert a2_row["a2_trace_side_valid_last_5_cr01_raw_buy_weight"] < a2_row["a2_trace_side_valid_last_5_cr01_raw_sell_weight"]
+
+    mutated = _drifted_cr01_bundle()
+    mutated.events.loc[4, "side"] = 1
+    mutated.events.loc[4, "cr01"] = 1000.0
+    mutated_artifact = A1.fit(mutated, config=a1_config, train_end=train_end)
+    assert a1_artifact.weights == mutated_artifact.weights
+
+
 def test_a4_last_side_and_switching_are_hand_calculated() -> None:
     features = compute_microstructure_features(_bundle(), event_windows=(5,), calendar_windows=("30m",))
     row = features[features["prediction_timestamp"] == pd.Timestamp("2026-01-02 10:20:00")].iloc[0]
@@ -98,6 +131,37 @@ def test_a4_last_side_and_switching_are_hand_calculated() -> None:
     assert later["a4_rfq_last_side"] == 1
     assert later["a4_rfq_same_side_run_length"] == 1
     assert math.isclose(later["a4_rfq_last_5_switching_hazard"], 1.0)
+
+
+def test_a3_fits_days_scale_baseline_from_training_only() -> None:
+    from mechanical_alpha.alphas import A3_buy_sell_intensity as A3
+
+    bundle = _intensity_bundle()
+    config = A3.IntensityConfig(half_life_candidates=("1d", "5d", "20d"), forecast_window="1d", minimum_observations=3)
+    train_end = pd.Timestamp("2026-01-08 09:00:00")
+    artifact = A3.fit(bundle, config=config, train_end=train_end)
+
+    assert artifact.fitted["rfq:1:cr01"].selected_half_life in {"1d", "5d", "20d"}
+    assert artifact.fitted["rfq:1:cr01"].baseline_intensity_per_second > 0
+    assert artifact.fitted["rfq:-1:cr01"].baseline_intensity_per_second > 0
+    assert artifact.fitted["trace:1"].selected_half_life in {"1d", "5d", "20d"}
+    assert artifact.fitted["trace:1"].baseline_intensity_per_second > 0
+    assert artifact.fitted["trace:-1"].baseline_intensity_per_second > 0
+
+    features = A3.score(bundle, artifact)
+    scored = features[features["prediction_timestamp"] == pd.Timestamp("2026-01-09 09:00:00")].iloc[0]
+    assert "a3_trace_fitted_buy_expected_intensity" in features.columns
+    assert "a3_rfq_fitted_cr01_buy_expected_intensity" in features.columns
+    assert "a3_rfq_fitted_cr01_intensity_surprise_difference" in features.columns
+    assert "a3_trace_fitted_intensity_surprise_difference" in features.columns
+    assert scored["a3_rfq_fitted_cr01_buy_half_life"] in {"1d", "5d", "20d"}
+
+    mutated = _intensity_bundle()
+    mutated.rfqs.loc[len(mutated.rfqs) - 1, "side"] = 1
+    mutated.rfqs.loc[len(mutated.rfqs) - 1, "timestamp"] = pd.Timestamp("2026-02-01 09:00:00")
+    mutated.rfqs.loc[len(mutated.rfqs) - 1, "cr01"] = 10_000.0
+    mutated_artifact = A3.fit(mutated, config=config, train_end=train_end)
+    assert artifact.fitted == mutated_artifact.fitted
 
 
 def test_a6_a16_optional_fields_are_point_in_time() -> None:
@@ -123,3 +187,106 @@ def test_registry_and_diagnostics_cover_required_families() -> None:
     assert "feature" in diagnostics.columns
     assert "non_null_rate" in diagnostics.columns
     assert diagnostics["feature"].str.contains("a1_trace_side_valid_last_5_count_imbalance").any()
+
+
+def _drifted_cr01_bundle() -> object:
+    bonds = pd.DataFrame(
+        {
+            "bond_id": ["b1"],
+            "issuer_id": ["iss1"],
+            "sector": ["industrial"],
+            "rating": ["BBB"],
+            "liquidity_bucket": ["liquid"],
+        }
+    )
+    timestamps = pd.to_datetime(
+        [
+            "2026-01-02 09:00:00",
+            "2026-01-02 09:10:00",
+            "2026-01-02 09:20:00",
+            "2026-01-02 09:30:00",
+            "2026-01-02 10:00:00",
+        ]
+    )
+    events = pd.DataFrame(
+        {
+            "event_id": [f"t{i}" for i in range(5)],
+            "prediction_timestamp": timestamps,
+            "bond_id": ["b1"] * 5,
+            "issuer_id": ["iss1"] * 5,
+            "side": [1, 1, 1, -1, -1],
+            "price": [100.0, 100.1, 100.2, 100.1, 100.0],
+            "notional": [100.0, 100.0, 100.0, 100.0, 500.0],
+            "cr01": [10.0, 10.0, 10.0, 10.0, 100.0],
+        }
+    )
+    metadata = SourceMetadata(
+        name="drifted",
+        side_convention=SideConvention.CUSTOMER,
+        side_semantics="customer buy = +1, customer sell = -1",
+        price_units="price points",
+        size_units="fixture units",
+        point_in_time_safety="synthetic fixture",
+    )
+    return bundle_from_frames(bonds=bonds, events=events, metadata=metadata)
+
+
+def _intensity_bundle() -> object:
+    bonds = pd.DataFrame(
+        {
+            "bond_id": ["b1"],
+            "issuer_id": ["iss1"],
+            "sector": ["industrial"],
+            "rating": ["BBB"],
+            "liquidity_bucket": ["liquid"],
+        }
+    )
+    dates = pd.bdate_range("2026-01-01", periods=8)
+    rows = []
+    for idx, date in enumerate(dates):
+        rows.append(
+            {
+                "event_id": f"buy_{idx}",
+                "prediction_timestamp": date + pd.Timedelta(hours=9),
+                "bond_id": "b1",
+                "issuer_id": "iss1",
+                "side": 1,
+                "price": 100.0,
+                "notional": 100.0,
+                "cr01": 10.0 + idx,
+            }
+        )
+        if idx % 2 == 0:
+            rows.append(
+                {
+                    "event_id": f"sell_{idx}",
+                    "prediction_timestamp": date + pd.Timedelta(hours=10),
+                    "bond_id": "b1",
+                    "issuer_id": "iss1",
+                    "side": -1,
+                    "price": 100.0,
+                    "notional": 100.0,
+                    "cr01": 20.0 + idx,
+                }
+            )
+    rfqs = pd.DataFrame(
+        {
+            "rfq_id": [f"r{i}" for i in range(len(rows))],
+            "timestamp": [row["prediction_timestamp"] - pd.Timedelta(minutes=5) for row in rows],
+            "bond_id": [row["bond_id"] for row in rows],
+            "issuer_id": [row["issuer_id"] for row in rows],
+            "side": [row["side"] for row in rows],
+            "size": [row["notional"] for row in rows],
+            "cr01": [row["cr01"] for row in rows],
+            "event_kind": ["inquiry"] * len(rows),
+        }
+    )
+    metadata = SourceMetadata(
+        name="intensity",
+        side_convention=SideConvention.CUSTOMER,
+        side_semantics="customer buy = +1, customer sell = -1",
+        price_units="price points",
+        size_units="fixture units",
+        point_in_time_safety="synthetic fixture",
+    )
+    return bundle_from_frames(bonds=bonds, events=pd.DataFrame(rows), rfqs=rfqs, metadata=metadata)

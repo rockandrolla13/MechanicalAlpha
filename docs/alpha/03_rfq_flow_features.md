@@ -37,9 +37,18 @@ This avoids using the event being predicted as its own feature.
 Formula:
 
 ```text
-(customer_buy_count_w - customer_sell_count_w)
-/ (customer_buy_count_w + customer_sell_count_w + epsilon)
+(w_buy * buy_measure_w - w_sell * sell_measure_w)
+/ (w_buy * buy_measure_w + w_sell * sell_measure_w + epsilon)
 ```
+
+The legacy unweighted count output is still available for comparison.
+The fitted path estimates `w_buy` and `w_sell` from training-period market totals only.
+The default fitted weighting is inverse market share, so persistent market buy/sell drift is neutral in expectation.
+
+Supported measures:
+
+- `count`
+- `cr01`, when event-level CR01 is present
 
 Implemented for:
 
@@ -51,33 +60,60 @@ Implemented for:
 
 Supported clocks:
 
-- calendar windows: `30m`, `2h`
-- event windows: `last_5`, `last_10`, `last_25`
+- configurable calendar windows
+- configurable event windows
 
 ### A2 RFQ Notional Imbalance
 
 Formula:
 
 ```text
-sum(customer_side_j * transformed_notional_j)
-/ (sum(abs(transformed_notional_j)) + epsilon)
+sum(w_side_j * customer_side_j * transformed_risk_j)
+/ (sum(w_side_j * abs(transformed_risk_j)) + epsilon)
 ```
+
+The fitted path prefers CR01 as the traded-risk measure.
+Notional remains available as an explicitly separate measure.
+The alpha does not replace missing CR01 with notional inside a CR01 feature.
+
+The fitted buy/sell weights are learned from training-period market totals.
+This prevents a persistent buy or sell drift from being treated as a balanced market.
 
 Variants:
 
-- raw notional
-- `log1p` notional
-- prior-window p95 capped notional
-- square-root notional
+- raw risk
+- `log1p` risk
+- capped risk
+- square-root risk
 
 ### A3 Buy/Sell Intensity Pressure
 
 Formula:
 
 ```text
-lambda_buy  = sum(exp(-log(2) * age_seconds_j / half_life_seconds)) / half_life_seconds
-lambda_sell = same calculation for customer sells
+lambda_buy_count  = sum(exp(-log(2) * age_seconds_j / half_life_seconds)) / half_life_seconds
+lambda_sell_count = same calculation for customer sells
+
+lambda_buy_cr01  = sum(CR01_j * exp(-log(2) * age_seconds_j / half_life_seconds)) / half_life_seconds
+lambda_sell_cr01 = same calculation for customer sells
 ```
+
+The default half-lives are now days-scale for corporate bonds.
+The fitted path searches configured candidates, currently:
+
+```text
+1d, 2d, 5d, 10d, 20d, 40d
+```
+
+Selection uses training-period rows only.
+For each candidate half-life, the alpha compares EWMA-implied expected counts with observed future training-window counts using Poisson deviance.
+For CR01 clocks, the same train-only candidate search compares EWMA-implied expected CR01 risk flow with observed future CR01 risk flow.
+The selected half-life and side-specific empirical baseline are frozen before scoring validation, test, or live-style rows.
+
+RFQ CR01 is the primary fitted clock when available.
+TRACE/event count clocks remain available as separate outputs.
+The code does not map static bond DV01 or CR01 into traded risk.
+CR01 must be present on the event or RFQ row to produce CR01 intensity features.
 
 Derived features:
 
@@ -86,6 +122,16 @@ Derived features:
 - intensity difference
 - intensity ratio
 - log intensity ratio
+- fitted buy expected intensity
+- fitted sell expected intensity
+- buy intensity surprise
+- sell intensity surprise
+- buy-minus-sell intensity surprise
+- fitted buy expected CR01 intensity
+- fitted sell expected CR01 intensity
+- buy CR01 intensity surprise
+- sell CR01 intensity surprise
+- buy-minus-sell CR01 intensity surprise
 
 The EWMA decay uses elapsed clock time.
 It does not assume regular observations.

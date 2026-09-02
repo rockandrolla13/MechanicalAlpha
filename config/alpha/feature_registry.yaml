@@ -11,41 +11,52 @@ point_in_time_rule:
 features:
   - id: A1
     name: RFQ count imbalance
-    formula: "(customer_buy_count_w - customer_sell_count_w) / (customer_buy_count_w + customer_sell_count_w + epsilon)"
+    formula: "(w_buy * buy_measure_w - w_sell * sell_measure_w) / (w_buy * buy_measure_w + w_sell * sell_measure_w + epsilon)"
     source_fields:
       - rfqs.timestamp
       - rfqs.side
+      - rfqs.cr01
       - rfqs.event_kind
       - events.prediction_timestamp
       - events.side
+      - events.cr01
     clocks:
       - calendar_time
       - rfq_event_time
       - trace_transaction_time
     windows:
-      - 30m
-      - 2h
+      - configurable_calendar_windows
       - last_5
       - last_10
       - last_25
+    measures:
+      - count
+      - cr01
+    fitted_parameters:
+      - buy_weight
+      - sell_weight
+    side_weight_mode: inverse_market_share
     minimum_observations: 1
-    missing_policy: Missing when the source table or valid side is unavailable.
-    expected_sign: Positive means recent customer-buy pressure.
+    missing_policy: Missing when the source table, valid side, or requested risk measure is unavailable.
+    expected_sign: Positive means recent customer-buy pressure after adjusting for market side drift.
     class: directional
     point_in_time_dependencies:
       - source event time strictly before prediction timestamp
+      - side weights fitted on training rows only
     computational_cost: O(prediction_rows * window_rows)
-    version: 0.1.0
+    version: 0.2.0
   - id: A2
     name: RFQ notional imbalance
-    formula: "sum(customer_side_j * transformed_notional_j) / (sum(abs(transformed_notional_j)) + epsilon)"
+    formula: "sum(w_side * customer_side_j * transformed_risk_j) / (sum(w_side * abs(transformed_risk_j)) + epsilon)"
     source_fields:
       - rfqs.timestamp
       - rfqs.side
       - rfqs.size
+      - rfqs.cr01
       - events.prediction_timestamp
       - events.side
       - events.notional
+      - events.cr01
     clocks:
       - calendar_time
       - rfq_event_time
@@ -57,41 +68,66 @@ features:
       - last_10
       - last_25
     variants:
-      - raw_notional
-      - log_notional
-      - capped_notional
-      - sqrt_notional
+      - raw_risk
+      - log_risk
+      - capped_risk
+      - sqrt_risk
+    measures:
+      - cr01
+      - notional
+    fitted_parameters:
+      - buy_weight
+      - sell_weight
+    side_weight_mode: inverse_market_share
     minimum_observations: 1
-    missing_policy: Missing when notional or side is unavailable.
-    expected_sign: Positive means larger recent customer-buy notional pressure.
+    missing_policy: Missing when side or requested risk measure is unavailable; CR01 is not silently replaced with notional.
+    expected_sign: Positive means larger recent customer-buy traded credit risk after adjusting for market side drift.
     class: directional
     point_in_time_dependencies:
       - source event time strictly before prediction timestamp
-      - caps use only rows inside the as-of window
+      - side weights fitted on training rows only
+      - transform caps use only the configured fitting/window policy
     computational_cost: O(prediction_rows * window_rows)
-    version: 0.1.0
+    version: 0.2.0
   - id: A3
     name: Buy/sell intensity pressure
-    formula: elapsed-time EWMA buy and sell intensities with difference, ratio, and log ratio
+    formula: train-selected elapsed-time EWMA count and CR01 intensities compared with frozen empirical baselines
     source_fields:
       - rfqs.timestamp
       - rfqs.side
+      - rfqs.cr01
       - events.prediction_timestamp
       - events.side
+      - events.cr01
     clocks:
       - calendar_time
+      - cr01_activity
     windows:
-      - 30m_half_life
-      - 2h_half_life
+      - 1d_half_life
+      - 2d_half_life
+      - 5d_half_life
+      - 10d_half_life
+      - 20d_half_life
+      - 40d_half_life
+    fitted_parameters:
+      - selected_buy_half_life
+      - selected_sell_half_life
+      - buy_baseline_intensity_per_second
+      - sell_baseline_intensity_per_second
+      - selected_buy_cr01_half_life
+      - selected_sell_cr01_half_life
+      - buy_baseline_cr01_per_second
+      - sell_baseline_cr01_per_second
     minimum_observations: 1
-    missing_policy: Missing when no prior observations exist for the source.
-    expected_sign: Higher buy-minus-sell or log ratio means customer-buy pressure.
+    missing_policy: Missing when no prior observations exist; CR01 clocks are missing when event-level CR01 is absent; fitted baseline falls back to pooled empirical rates when sparse.
+    expected_sign: Higher buy-minus-sell surprise means abnormal customer-buy arrival pressure or abnormal customer-buy CR01 risk flow.
     class: directional
     point_in_time_dependencies:
       - source event time strictly before prediction timestamp
       - EWMA weights use elapsed time
+      - half-life and baselines fitted on training rows only, with RFQ CR01 as the primary fitted risk clock when available
     computational_cost: O(prediction_rows * prior_rows)
-    version: 0.1.0
+    version: 0.3.0
   - id: A4
     name: Last-side persistence and switching state
     formula: last side, run length, time since side change, same-side fractions, interactions, and switching hazard

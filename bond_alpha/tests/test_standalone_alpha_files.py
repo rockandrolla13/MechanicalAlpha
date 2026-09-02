@@ -81,6 +81,7 @@ def _bundle() -> object:
             "side": [1, 1, -1],
             "price": [100.0, 100.1, 100.0],
             "notional": [100.0, 300.0, 100.0],
+            "cr01": [10.0, 30.0, 10.0],
         }
     )
     rfqs = pd.DataFrame(
@@ -93,6 +94,7 @@ def _bundle() -> object:
             "issuer_id": ["iss1", "iss1", "iss1"],
             "side": [1, -1, 1],
             "size": [100.0, 300.0, 100.0],
+            "cr01": [10.0, 30.0, 10.0],
             "event_kind": ["inquiry", "firm_up", "execution"],
             "response_count": [2, 1, 0],
             "number_of_dealers": [3, 3, 3],
@@ -123,4 +125,3 @@ def _bundle() -> object:
         point_in_time_safety="synthetic fixture",
     )
     return bundle_from_frames(bonds=bonds, events=events, rfqs=rfqs, quotes=quotes, metadata=metadata)
-
