@@ -1,0 +1,33 @@
+The cleanest generalization is to replace each RFQ's unit count with a **mass** $m_i = w(q_i)\,e^{-\lambda\,\text{age}_i}$, so the two sums become amount-weighted and the prior gets expressed in the same units:
+
+$$
+n_{\text{buy}} = \sum_{i\in\text{SELL RFQs}} w(q_i)\,e^{-\lambda\,\text{age}_i},\qquad
+\alpha = \frac{n_{\text{buy}}-n_{\text{sell}}}{2\,(n_{\text{buy}}+n_{\text{sell}}+2\,\pi)}
+$$
+
+Your current formula is the special case $w\equiv 1$. The choices that matter:
+
+**1. Shape of $w(q)$.** Linear $w = q/q_{\text{ref}}$ lets one block RFQ dominate the bucket, which is usually not what you want (a $50m inquiry isn't 50× the information of a $1m one). The standard concave options:
+
+- power: $w(q) = (q/q_{\text{ref}})^{\gamma}$, $\gamma\in[0.3,0.7]$ — mirrors square-root impact intuition; $\gamma=0$ recovers counts, $\gamma=1$ recovers notional
+- log: $w(q) = \log(1+q/q_{\text{ref}})$
+- winsorized linear: $\min(q, q_{\text{cap}})/q_{\text{ref}}$
+
+$\gamma$ becomes a tunable alongside `half_life_days` and `lookback_days` in your grid.
+
+**2. Normalization $q_{\text{ref}}$.** The ratio itself is scale-free, but the prior $\pi$ isn't — with raw dollars, $\pi$ is negligible for IG benchmarks and dominant for small HY buckets. So make $q_{\text{ref}}$ bucket-relative: the rolling median (or trimmed mean) RFQ size in $B$ over the lookback, point-in-time. Then $w$ is "how many typical inquiries is this worth" and $\pi$ keeps its meaning as pseudo-inquiries.
+
+**3. Optionally, size-dependent decay.** If you think large inquiries carry information longer, let $\lambda_i = \lambda / (1+\kappa\log(1+q_i/q_{\text{ref}}))$. That's a second parameter; I'd only add it if the $\gamma$-only version leaves clear residual structure by size tercile.
+
+**4. Or keep both channels and blend.** Compute $\alpha_{\text{count}}$ ($\gamma=0$) and $\alpha_{\text{amt}}$ ($\gamma=1$) and let $\alpha = \theta\,\alpha_{\text{count}} + (1-\theta)\,\alpha_{\text{amt}}$ — easier to interpret in the OOS evaluation, and $\theta$ is one linear parameter.
+
+In code it's a one-line change in the aggregation:
+
+```python
+w = (df.amount / df.q_ref).clip(upper=cap) ** gamma
+df["mass"] = w * np.exp(-lam * df.age)
+n_buy  = df.loc[df.side == "SELL", "mass"].sum()
+n_sell = df.loc[df.side == "BUY",  "mass"].sum()
+```
+
+Separately, the KaTeX error in the cell: underscores inside `\text{}` need escaping — `\log(2)/\text{half\_life\_days}` (or `\mathrm{half\_life\_days}`).
