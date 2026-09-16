@@ -9,7 +9,7 @@ data/synthetic/
 data/synthetic_truth/
 data/quarantine/
 data/medium/
-models/
+/models/
 reports/
 runs/
 .orch/
