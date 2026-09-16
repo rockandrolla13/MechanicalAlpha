@@ -365,7 +365,7 @@ def _future_price_rows(public_trades: pd.DataFrame, event_ids: pd.DataFrame, hor
 
 def _leadlag_estimate(public: pd.DataFrame, anchors: pd.DataFrame, target_filter: object, horizon: pd.Timedelta) -> tuple[float, int]:
     estimates: list[float] = []
-    event_times = pd.to_datetime(public["timestamp_utc"], utc=True).astype("int64").to_numpy()
+    event_times = pd.to_datetime(public["timestamp_utc"], utc=True).to_numpy(dtype="datetime64[ns]").astype("int64")
     horizon_ns = int(horizon.value)
     for anchor in anchors.itertuples(index=False):
         anchor_ns = int(pd.Timestamp(anchor.timestamp_utc).value)
