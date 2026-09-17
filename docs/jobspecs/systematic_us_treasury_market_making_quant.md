@@ -26,6 +26,7 @@ You will work directly with traders and engineers, using market data to develop 
 - You have hands-on experience pricing and risk-managing US Treasury cash–futures basis. You can explain the economics of the trade, including funding and delivery, and know where a seemingly attractive basis can lose money.
 - You have worked in electronic market making or systematic trading in Treasuries, rates ETFs or a closely related fixed income market. Experience with off-the-run Treasury pricing is particularly valuable.
 - You are strong in fixed income analytics, statistical research and programming. You use Python or similar tools to work with market data and can collaborate on production trading systems.
+- We prefer candidates with a postgraduate degree in mathematics, statistics, physics, computer science, engineering or a related quantitative field, particularly a PhD.
 - You think in terms of executable prices and realised results. You account for spreads, fills, hedging costs, financing and changing liquidity in your research.
 - You are comfortable making decisions with incomplete information, testing your assumptions and changing course when the data disagrees.
 - You communicate clearly and enjoy solving trading problems with researchers, traders and engineers.
