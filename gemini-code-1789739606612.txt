@@ -1,0 +1,372 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsfonts,bm}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{algorithm2e}
+\usepackage{hyperref}
+\usepackage{fancyhdr}
+\usepackage{microtype}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!70!black,
+    citecolor=red!70!black,
+    urlcolor=blue!70!black
+}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.96,0.97,0.98}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\scriptsize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=4
+}
+\lstset{style=mystyle}
+
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\small Systematic Credit Microstructure \& RV Alpha Architecture}
+\lhead{\small Production Mathematical Specification}
+\cfoot{\thepage}
+
+\title{\textbf{\Large Systematic Microstructure and Relative Value Alpha Architecture in Corporate Credit: Production Specification}}
+\author{\textbf{Quantitative Research \& Alpha Architecture Group}}
+\date{\textbf{September 2026}}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This document provides the exhaustive mathematical and software implementation specification for twenty production signals designed to forecast 5-day ($h=5$) and 10-day ($h=10$) residualized corporate bond returns. We detail the econometric residualization engine via multi-period Dimson lead-lag regressions, the formulations and execution logic for twenty core alphas, the framework for combining these features via monotonic Gradient Boosted Trees, the extension to signal families, and the unified autonomous agent implementation runbooks.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Econometric Residualization \& Non-Synchronous Execution Hurdle}
+
+\subsection{The Residualization Engine}
+To isolate true microstructural alpha, the raw log price return $R_{i, t \to t+h}$ over horizon $h \in \{5, 10\}$ trading days must be purged of systemic factor exposure spanning Key Rate Durations (KRD), Systematic Credit Beta (CDX), Sector/Rating Betas, and Underlying Equity Merton Beta ($\epsilon_{j(i), t}^{\text{eq}}$).
+
+Because corporate bonds trade non-synchronously (the Epps effect), contemporaneous OLS underestimates factor exposures. We implement a generalized multi-period Dimson lead-lag estimator across window $K \in \{-2, -1, 0, 1, 2\}$:
+\begin{equation}
+R_{i, t} = \alpha_i + \sum_{k=-K}^{K} \bm{\beta}_{i,k}^\top \mathbf{F}_{t+k} + \varepsilon_{i,t}, \quad \bm{\beta}_i^* = \sum_{k=-K}^{K} \hat{\bm{\beta}}_{i,k}
+\end{equation}
+The residual return target $R_{i, t \to t+h}^{\text{resid}}$ for machine learning calibration is generated as:
+\begin{equation}
+R_{i, t \to t+h}^{\text{resid}} = R_{i, t \to t+h} - (\bm{\beta}_i^*)^\top \mathbf{F}_{t \to t+h}
+\end{equation}
+
+\subsection{Microstructure Cost-to-Clear Hurdle}
+A signal $\alpha_{i,t}$ is economically tradeable if the conditional expected residual return strictly exceeds the round-trip execution cost at confidence $1-\gamma$:
+\begin{equation}
+\mathbb{E}\left[R_{i, t \to t+h}^{\text{resid}} \cdot \text{sgn}(\alpha_{i,t}) \mid \mathcal{F}_t \right] > \mathcal{C}_{i,t}^{\text{eff}} + z_{1-\gamma} \cdot \sigma_{\text{resid}}
+\end{equation}
+\begin{equation}
+\mathcal{C}_{i,t}^{\text{eff}} = \kappa_0 \cdot \mathcal{S}_{i,t}^{\text{BA}} + \kappa_1 \left(\frac{\text{OrderSize}_i}{\text{ADV}_{i,20}}\right)^{\eta} - \Phi_{\text{venue}}
+\end{equation}
+where $\Phi_{\text{venue}}$ represents the concession captured when executing via Portfolio Trading ($\text{PT}$) or crossing on resting dealer axes.
+
+\newpage
+
+\section{The Twenty Production Microstructure Alphas}
+
+This section details the theoretical foundation, mathematical formulation, agent implementation contract, and invariant test parameters for all twenty alpha signals.
+
+\subsection{Cluster 1: Dealer Inventory, Axes, \& RFQ Microstructure}
+
+\subsubsection{Signal 01: Dealer Axe Imbalance Velocity ($\alpha_{\text{AXE}}$)}
+\textbf{Microstructure \& Execution:} An abrupt positive shift in dealer buy axes indicates balance-sheet exhaustion following block liquidations, forcing secondary quotes upward. Execute passively via bilateral ATS limit orders (Decay: $t+4$). \\
+\textbf{Data Contract \& Sanitization:} Ingest \texttt{market\_data.axes}. Deduplicate by \texttt{[cusip, dealer\_id]} taking the latest intraday snapshot prior to 16:00 EST. Forward-fill max 24h. Drop if volume $> 50\times \text{ADV}$. \\
+\textbf{Formulation:} Let $A_{i,t}^{\text{buy}}, A_{i,t}^{\text{sell}}$ be aggregate par volumes and $\mathcal{D}_{i,t}$ be quoting dealer counts.
+\begin{equation}
+\text{Imb}_{i,t} = \frac{A_{i,t}^{\text{buy}} - A_{i,t}^{\text{sell}}}{A_{i,t}^{\text{buy}} + A_{i,t}^{\text{sell}} + 1} \ln\left(1 + \frac{\mathcal{D}_{i,t}^{\text{buy}}}{\mathcal{D}_{i,t}^{\text{sell}} + 1}\right), \quad \alpha_{\text{AXE}, i, t} = \frac{\Delta_3 \text{Imb}_{i,t}}{\sigma_{60}(\Delta_3 \text{Imb}_i) + 10^{-6}}
+\end{equation}
+\textbf{Agent Prompts \& Invariants:} \textbf{(P1)} Write Polars ingestion enforcing 16:00 UTC cutoff and deduplication. \textbf{(P2)} Implement vectorized 3-day difference and bounded Z-score. Zero out bonds if ADV $< \$500$k. \textbf{(P3)} PyTest: Verify exactly $0.0$ if no axes exist; assert bounds $[-3.0, 3.0]$.
+
+\begin{lstlisting}[language=Python]
+def compute_alpha_axe(df_axes: pd.DataFrame, adv20: pd.Series) -> pd.Series:
+    vol_sum = df_axes['axe_buy_vol'] + df_axes['axe_sell_vol'] + 1e-6
+    raw_imb = ((df_axes['axe_buy_vol'] - df_axes['axe_sell_vol']) / vol_sum) * \
+              np.log(1.0 + (df_axes['n_dealers_buy'] / (df_axes['n_dealers_sell'] + 1.0)))
+    vel = raw_imb.groupby(df_axes['bond_id']).diff(3)
+    alpha = vel / (vel.groupby(df_axes['bond_id']).transform(lambda x: x.rolling(60).std()) + 1e-6)
+    return alpha.where(adv20 > 500000, 0.0).clip(-3.0, 3.0)
+\end{lstlisting}
+
+\subsubsection{Signal 02: Signed Institutional Flow Imbalance ($\alpha_{\text{CUST}}$)}
+\textbf{Microstructure \& Execution:} Customer-to-dealer flow imbalance depletes street-wide liquidity, forcing quotes upward over 10 days. Execute via Portfolio Trading baskets to reduce ticket friction. \\
+\textbf{Data Contract \& Sanitization:} Ingest FINRA TRACE. Drop \texttt{D-D} (inter-dealer) trades. Re-map \texttt{CANC} and \texttt{CORR} messages using \texttt{original\_msg\_seq\_no}. \\
+\textbf{Formulation:} Apply an 11-day exponential decay $w_k = \exp(-k \ln 2 / 3.0)$ to Customer-Buy ($V^{\text{D-C}}$) and Customer-Sell ($V^{\text{C-D}}$) volumes.
+\begin{equation}
+\alpha_{\text{CUST}, i, t} = \frac{\sum_{k=0}^{10} w_k \left( V_{i, t-k}^{\text{D-C}} - V_{i, t-k}^{\text{C-D}} \right)}{\sum_{k=0}^{10} w_k \left( V_{i, t-k}^{\text{D-C}} + V_{i, t-k}^{\text{C-D}} \right) + 0.10 \times \text{ADV}_{i, 20}}
+\end{equation}
+\textbf{Agent Prompts \& Invariants:} \textbf{(P1)} Build TRACE cleaning module resolving cancellations recursively. \textbf{(P2)} Apply exponential convolution array logic. \textbf{(P3)} PyTest: Verify that \texttt{CANC} messages perfectly nullify original volumes; assert $[-1.0, 1.0]$ bounds.
+
+\subsubsection{Signal 03: Post-Block Capped-Print Concession ($\alpha_{\text{BLOCK}}$)}
+\textbf{Microstructure \& Execution:} Masked regulatory block trades (e.g., $>\$5$MM IG) extract severe immediate liquidity concessions from dealers, creating an inverted spread that mean-reverts over 5 days. Execute by directly providing liquidity inside the post-block spread. \\
+\textbf{Data Contract \& Sanitization:} Filter TRACE for \texttt{is\_capped == True}. Join with instantaneous benchmark Treasury yields to compute exact execution OAS. \\
+\textbf{Formulation:} Standardize the trade OAS against its trailing 20-day distribution.
+\begin{equation}
+Z_{i,t}^{\text{block}} = \frac{\text{OAS}_{i,t}^{\text{print}} - \mu_{20}(\text{OAS}_i)}{\sigma_{20}(\text{OAS}_i) + 10^{-4}}, \quad \alpha_{\text{BLOCK}, i, t} = -Z_{i,t}^{\text{block}} \cdot \mathbb{I}_{\{Z_{i,t}^{\text{block}} > 2.50\}} \cdot e^{-\frac{\tau}{2.5}}
+\end{equation}
+\textbf{Agent Prompts \& Invariants:} \textbf{(P1)} Write a trade filtration class isolating capped prints. \textbf{(P2)} Compute execution OAS Z-score; implement $Z > 2.50$ threshold activation and exponential time decay $\tau$. \textbf{(P3)} PyTest: Verify non-capped trades evaluate to 0.0; assure negative alpha for positive spread blowouts.
+
+\subsubsection{Signal 04: RFQ Cover-to-Win Spread Dispersion ($\alpha_{\text{RFQ\_DISP}}$)}
+\textbf{Microstructure \& Execution:} In RFQ auctions, the gap between the winning quote and the cover quote, normalized by dealer dispersion, reveals inventory consensus. Tight gaps predict post-trade institutional momentum. \\
+\textbf{Data Contract \& Sanitization:} Ingest MarketAxess/Tradeweb RFQ logs. Discard auctions with $< 4$ responding dealers. Ensure strict monotonicity of ordered quotes. \\
+\textbf{Formulation:} Let $s^{(1)}$ be the winner, $s^{(2)}$ the cover, and $\sigma_{\text{RFQ}}$ the sample standard deviation of all $K$ quotes.
+\begin{equation}
+\alpha_{\text{RFQ\_DISP}, i, t} = -\left( \frac{|s_{i,t}^{(1)} - s_{i,t}^{(2)}|}{\sigma_{\text{RFQ}} + 10^{-4}} \right) \ln(K)
+\end{equation}
+\textbf{Agent Prompts \& Invariants:} \textbf{(P1)} Build RFQ parser grouping by \texttt{rfq\_id}. \textbf{(P2)} Calculate dispersion metric; volume-weight multiple intra-day RFQs. \textbf{(P3)} PyTest: Auctions with $K<4$ yield $0.0$; identical quotes yield $0.0$.
+
+\subsubsection{Signal 05: Imputed Round-Trip Cost (IRTC) Dislocation ($\alpha_{\text{IRTC}}$)}
+\textbf{Microstructure \& Execution:} Identify perfectly matched customer $\to$ dealer $\to$ customer trades within 15 minutes. Sudden compression in dealer extraction indicates algorithmic market-maker entry, signaling a repricing of the bond's liquidity premium. \\
+\textbf{Data Contract \& Sanitization:} TRACE tick stream. Match identical CUSIP and volume where \texttt{C-D} is followed by \texttt{D-C} within $\Delta \tau \le 900$ seconds. \\
+\textbf{Formulation:} Calculate fractional round-trip cost $C_m$, take daily mean $\overline{C}_t$, and compute the inverted 60-day Z-score:
+\begin{equation}
+\alpha_{\text{IRTC}, i, t} = -\left( \frac{\overline{C}_{i,t} - \mu_{60}(\overline{C}_i)}{\sigma_{60}(\overline{C}_i) + 10^{-5}} \right)
+\end{equation}
+\textbf{Agent Prompts \& Invariants:} \textbf{(P1)} Write sequential matching engine using \texttt{shift()} in Polars enforcing time delta $<900$s. \textbf{(P2)} Calculate daily aggregated Z-score. \textbf{(P3)} PyTest: Verify unmatched sizes are rejected.
+
+\subsection{Cluster 2: Cross-Asset Structural Arbitrage}
+
+\subsubsection{Signal 06: Merton OTM Put Skew Lead-Lag ($\alpha_{\text{PUT\_SKEW}}$)}
+\textbf{Microstructure \& Execution:} Equity option 25-delta put skew steepening systematically leads credit spread widening by 5-10 days due to centralized exchange latency advantages. Execute via CDS proxy or shorting physical debt. \\
+\textbf{Data Contract \& Sanitization:} OPRA 30-day surface. Link equity tickers to bond CUSIPs via LEI master. Discard quotes where 25d Put IV $<$ ATM IV. \\
+\textbf{Formulation:} Standardize 5-day delta of skew against 5-day delta of OAS:
+\begin{equation}
+\alpha_{\text{PUT\_SKEW}, i, t} = -\left( \frac{\Delta_5 \text{Skew}_{j(i),t}}{\sigma_{60}(\Delta_5 \text{Skew})} - \frac{\Delta_5 \text{OAS}_{i,t}}{\sigma_{60}(\Delta_5 \text{OAS})} \right)
+\end{equation}
+\textbf{Agent Prompts \& Invariants:} \textbf{(P1)} Cross-asset LEI mapping utility. \textbf{(P2)} Z-score differential calculation. \textbf{(P3)} PyTest: Symmetrical standard moves evaluate to 0.0.
+
+\subsubsection{Signal 07: CDS-Cash Basis conditioned on Repo Haircut ($\alpha_{\text{BASIS}}$)}
+\textbf{Microstructure \& Execution:} Negative basis (cash OAS $>$ CDS) highlights balance sheet limits. Reversion is bounded by specific repo financing costs. Buy cash / short CDS packages. \\
+\textbf{Data Contract \& Sanitization:} Markit 5Y CDS, DTCC Repo Rates. Restrict cash bonds to remaining maturities $4.0-6.0$ years. \\
+\textbf{Formulation:} Determine carrying threshold $\Theta$ based on repo spread and haircut $H$:
+\begin{equation}
+\Theta_{i,t} = 15 + 1.2 H_{i,t} + 0.8 (R^{\text{repo}} - R^{\text{SOFR}}), \quad \alpha_{\text{BASIS}, i, t} = -\frac{\text{Basis}_{i,t} - \Theta_{i,t}}{\sigma_{90}(\text{Basis})} \mathbb{I}_{\{|\text{Basis}| > \Theta\}}
+\end{equation}
+\textbf{Agent Prompts \& Invariants:} \textbf{(P1)} CDS-to-Cash maturity filtering. \textbf{(P2)} Conditional threshold formulation. \textbf{(P3)} PyTest: Basis inside threshold strictly yields $0.0$.
+
+\subsubsection{Signal 08: Equity VPIN Spillover ($\alpha_{\text{VPIN}}$)}
+\textbf{Microstructure \& Execution:} Volume-Synchronized Probability of Toxicity (VPIN) detects informed equity trading, preceding corporate bond downgrades or spread blowouts. \\
+\textbf{Data Contract \& Sanitization:} CTA Equity ticks. Discard condition codes \texttt{Z, B, T}. Set bucket volume $V = \text{ADV}/50$. \\
+\textbf{Formulation:} Calculate Lee-Ready signed volumes $V^B, V^S$. Evaluate over 50 buckets:
+\begin{equation}
+\text{VPIN}_t = \frac{\sum_{k=1}^{50} |V_k^B - V_k^S|}{50 V}, \quad \alpha_{\text{VPIN}, i, t} = -z(\text{VPIN}_{j, t}) \cdot \mathbb{I}_{\{z(\text{VPIN}) > 1.96\}}
+\end{equation}
+\textbf{Agent Prompts \& Invariants:} \textbf{(P1)} Numba-compiled Lee-Ready tick classifier. \textbf{(P2)} Constant-volume bucket VPIN aggregation and thresholding. \textbf{(P3)} PyTest: 100\% buy volume outputs VPIN = 1.0.
+
+\subsubsection{Signal 09: Convertible Gamma Squeeze ($\alpha_{\text{CONV}}$)}
+\textbf{Microstructure \& Execution:} High equity volatility near convertible strikes forces delta-hedging, consuming dealer capital and widening straight debt. \\
+\textbf{Data Contract \& Sanitization:} Bloomberg \texttt{CACS}. Restrict to convertibles with moneyness $[0.7, 1.3]$. \\
+\textbf{Formulation:} Calculate required equity rebalancing flow divided by dollar ADV:
+\begin{equation}
+\alpha_{\text{CONV}, i, t} = -\left( \frac{\sum_c \Gamma_c S |\Delta S|}{\text{ADV}^{\text{eq}} + 1} \right) \text{sgn}(\text{OAS}_{i,t} - \mu_{20}(\text{OAS}_i))
+\end{equation}
+\textbf{Agent Prompts \& Invariants:} \textbf{(P1)} Aggregate delta-adjusted gamma per parent LEI. \textbf{(P2)} Calculate flow strain vs straight OAS. \textbf{(P3)} PyTest: Zero stock movement forces $\alpha = 0.0$.
+
+\subsection{Cluster 3: Capital Structure \& Relative Value}
+
+\subsubsection{Signal 10: NSS Spline Residual Dislocation ($\alpha_{\text{CURVE}}$)}
+\textbf{Microstructure \& Execution:} Cross-sectional Svensson curve fitting across an issuer's straight debt isolates anomalous local supply shocks. Pair trade against adjacent maturities. \\
+\textbf{Data Contract \& Sanitization:} BVAL pricing. Require $\ge 5$ bonds per issuer. Exclude bonds $<9$ months to call. \\
+\textbf{Formulation:} Minimize duration-weighted pricing error to fit curve $y(m; \bm{\beta}, \bm{\tau})$. Extract residual $\xi = \text{OAS} - y(m)$.
+\begin{equation}
+\alpha_{\text{CURVE}, i, t} = -\frac{\xi_{i,t} - \mu_{20}(\xi_i)}{\sigma_{20}(\xi_i) + 10^{-4}}
+\end{equation}
+\textbf{Agent Prompts \& Invariants:} \textbf{(P1)} Issuer grouping script. \textbf{(P2)} Implement \texttt{scipy.optimize.minimize} for Svensson parametric form. \textbf{(P3)} PyTest: Confirm optimizer correctly isolates a synthetic single-point dislocation.
+
+\subsubsection{Signal 11: On/Off-the-Run Roll Concession ($\alpha_{\text{ROLL}}$)}
+\textbf{Microstructure \& Execution:} New primary issuance strips liquidity from the immediate seasoned predecessor. The resulting liquidity premium overshoots and compresses within 20 days. \\
+\textbf{Data Contract \& Sanitization:} Pair new issues with nearest predecessor ($|\Delta \text{Dur}| \le 1.25$y). \\
+\textbf{Formulation:} Duration-adjusted spread $\Delta S = \text{OAS}_{\text{off}} - \text{OAS}_{\text{on}} - 1.5(\Delta \text{Dur})$.
+\begin{equation}
+\alpha_{\text{ROLL}, \text{off}, t} = \frac{\Delta S_t - \text{EMA}_{10}(\Delta S_t)}{\sigma_{30}(\Delta S) + 10^{-4}} \cdot \mathbb{I}_{\{\tau \le 20\text{ days}\}}
+\end{equation}
+\textbf{Agent Prompts \& Invariants:} \textbf{(P1)} Construct on/off pairs matrix. \textbf{(P2)} Duration adjustment and 20-day age gate. \textbf{(P3)} PyTest: Ensure symmetric outputs (On = -Off) and nullification post-day 20.
+
+\subsubsection{Signal 12: HoldCo vs. OpCo Compression ($\alpha_{\text{STRUCT}}$)}
+\textbf{Microstructure \& Execution:} Market shocks disproportionately liquidate liquid parent (HoldCo) debt vs subsidiary (OpCo) debt. Ratios revert to structural recovery boundaries. \\
+\textbf{Data Contract \& Sanitization:} Pair parent/subsidiary bonds matched by duration ($<1.5$y). Gated at $\text{OAS} > 40$ bps. \\
+\textbf{Formulation:} Let $\mathcal{R}_t = \text{OAS}_{\text{HoldCo}} / \text{OAS}_{\text{OpCo}}$.
+\begin{equation}
+\alpha_{\text{STRUCT}, \text{HoldCo}, t} = -\frac{\mathcal{R}_t - \mu_{60}(\mathcal{R})}{\sigma_{60}(\mathcal{R}) + 10^{-4}}
+\end{equation}
+\textbf{Agent Prompts \& Invariants:} \textbf{(P1)} Map structural LEI pairs. \textbf{(P2)} Ratio Z-score engine. \textbf{(P3)} PyTest: Strict anti-symmetry between pair legs.
+
+\subsubsection{Signal 13: PCA Sector-Neutral Butterfly ($\alpha_{\text{FLY}}$)}
+\textbf{Microstructure \& Execution:} Principal Component Analysis (PCA) on homogeneous sector peers isolates microstructural curvature dislocations from fundamental drift. \\
+\textbf{Data Contract \& Sanitization:} Forward-fill matrix missingness (max 2 days). Require $>15$ bonds per sector. \\
+\textbf{Formulation:} Reconstruct fair OAS using first 3 PCs (Level, Slope, Curvature). $\eta_i = \text{OAS}_i - \widehat{\text{OAS}}_i$.
+\begin{equation}
+\alpha_{\text{FLY}, i, t} = -\frac{\eta_{i,t}}{\sigma_{30}(\eta_i) + 10^{-4}}
+\end{equation}
+\textbf{Agent Prompts \& Invariants:} \textbf{(P1)} Sector matrix pivot. \textbf{(P2)} Rolling 60-day SVD reconstruction. \textbf{(P3)} PyTest: Exact 3-factor synthetic inputs must yield $0.0$ tracking error.
+
+\subsection{Cluster 4: ETF Arbitrage \& Index Mechanics}
+
+\subsubsection{Signal 14: AP Custom-Basket Inventory Overhang ($\alpha_{\text{AP\_FLOW}}$)}
+\textbf{Microstructure \& Execution:} ETF redemptions force Authorized Participants (APs) to liquidate physical bonds into the OTC market, driving 3-to-5 day price troughs. \\
+\textbf{Data Contract \& Sanitization:} ETF PCF files. Differentiate creation vs redemption weights based on $\Delta \text{Shares}$. \\
+\textbf{Formulation:} Interact NAV discount, basket overweight, and absolute dollar flow:
+\begin{equation}
+\text{Overhang}_{i,t} = \pi_t \left(\frac{w^{\text{Basket}}}{w^{\text{Index}}}\right) \left(\frac{\Delta \text{Shares} \cdot \text{NAV}}{\text{ADV}^{\text{dollar}}}\right), \quad \alpha_{\text{AP\_FLOW}, i, t} = \text{EMA}_3(\text{Overhang}_{i,t})
+\end{equation}
+\textbf{Agent Prompts \& Invariants:} \textbf{(P1)} Parse PCF files and align with NAV premiums. \textbf{(P2)} Overhang equation and EMA smoothing. \textbf{(P3)} PyTest: Zero share delta forces alpha to $0.0$.
+
+\subsubsection{Signal 15: Index Rebalance Front-Running Exhaustion ($\alpha_{\text{REBAL}}$)}
+\textbf{Microstructure \& Execution:} Fast-money front-running of month-end index inclusions overshoots. On rebalance day, passive flows execute, triggering an immediate 5-day mean-reverting exhaustion. \\
+\textbf{Data Contract \& Sanitization:} Bloomberg projected index deltas. Active strictly for $\tau \in [0, 5]$ post-rebalance. \\
+\textbf{Formulation:} $\mathcal{I}_i = \text{par\_delta}_i / \text{ADV}_{i,20}$.
+\begin{equation}
+\alpha_{\text{REBAL}, i, t} = -\text{sgn}(\mathcal{I}_i) \ln(1 + |\mathcal{I}_i|) \cdot e^{-\frac{\tau}{2}} \cdot \mathbb{I}_{\{0 \le \tau \le 5\}}
+\end{equation}
+\textbf{Agent Prompts \& Invariants:} \textbf{(P1)} Projection ingestion. \textbf{(P2)} Post-rebalance decay window logic. \textbf{(P3)} PyTest: Exactly zero outside the active 5-day window.
+
+\subsubsection{Signal 16: Shadow Basket Subsidization ($\alpha_{\text{SHADOW}}$)}
+\textbf{Microstructure \& Execution:} Bonds actively traded in electronic Portfolio Trading (PT) protocols receive synthetic liquidity subsidies. Decoupling between PT volume and single-ticket OAS forecasts reversion. \\
+\textbf{Data Contract \& Sanitization:} TRACE with PT protocol flags. Require 40-day baseline. \\
+\textbf{Formulation:} Compute 20-day ratio of PT volume to Total volume ($\Psi$).
+\begin{equation}
+\alpha_{\text{SHADOW}, i, t} = -z_{60}(\Psi_{i,t}) + z_{60}(\Delta_5 \text{OAS}_{i,t})
+\end{equation}
+\textbf{Agent Prompts \& Invariants:} \textbf{(P1)} PT volume ratio aggregator. \textbf{(P2)} Z-score divergence calculator. \textbf{(P3)} PyTest: Zero PT volume nullifies the first term correctly.
+
+\subsection{Cluster 5: Non-Linear Microstructure \& Asymmetry}
+
+\subsubsection{Signal 17: MFDFA Hurst Switch ($\alpha_{\text{MFDFA}}$)}
+\textbf{Microstructure \& Execution:} Detrended Fluctuation Analysis detects shifts in tick scaling exponents. A drop in $h(2)$ below 0.42 signals algorithmic non-Poissonian supply bursts. \\
+\textbf{Data Contract \& Sanitization:} High-frequency ATS mid-quotes. Require $\ge 500$ ticks/week. \\
+\textbf{Formulation:} Calculate local detrended variance $F_q(s)$ over scales $s$. Extract $h(2)$ and multifractal width $\Delta h$.
+\begin{equation}
+\alpha_{\text{MFDFA}, i, t} = -\text{sgn}(\Delta_3 \text{OAS}_{i,t}) \cdot \mathbb{I}_{\{h(2) < 0.42\}} \cdot \left(\frac{\Delta h - \mu(\Delta h)}{0.10}\right)
+\end{equation}
+\textbf{Agent Prompts \& Invariants:} \textbf{(P1)} Numba-compiled DFA polynomial detrending. \textbf{(P2)} Exponent extraction via log-log regression. \textbf{(P3)} PyTest: Brownian motion inputs yield $h=0.5$ and alpha $=0.0$.
+
+\subsubsection{Signal 18: Conformalized Quantile Liquidity Shock ($\alpha_{\text{CONF}}$)}
+\textbf{Microstructure \& Execution:} Finite-sample conformal prediction bands wrap LightGBM residual forecasts. Excursions beyond bounds represent supply shocks, not fundamental drift. \\
+\textbf{Data Contract \& Sanitization:} Pre-computed feature matrix. Strict Train/Calibrate/Embargo time-splits. \\
+\textbf{Formulation:} Compute empirical quantile $\hat{Q}$ of non-conformity scores on calibration set.
+\begin{equation}
+\alpha_{\text{CONF}, i, t} = +1 \text{ if } R_{t}^{\text{resid}} < (\hat{q}_{\text{low}} - \hat{Q}), \text{ else } -1 \text{ if } R_{t}^{\text{resid}} > (\hat{q}_{\text{high}} + \hat{Q})
+\end{equation}
+\textbf{Agent Prompts \& Invariants:} \textbf{(P1)} LightGBM quantile regression wrappers. \textbf{(P2)} Conformal non-conformity scoring. \textbf{(P3)} PyTest: Ensure empirical coverage is strictly $\ge 90\%$ on calibration.
+
+\subsubsection{Signal 19: Double Machine Learning Quoting Latency ($\alpha_{\text{DML}}$)}
+\textbf{Microstructure \& Execution:} Isolates causal quote latency (time gap between rates move and bond quote update) by conditioning out multi-dimensional confounders (DTS, liquidity). \\
+\textbf{Data Contract \& Sanitization:} Quote updates and Treasury ticks. Cap max latency at 3600 seconds. \\
+\textbf{Formulation:} Train nuisance models $\hat{m}(X)$ and $\hat{g}(X)$. Compute orthogonal causal parameter $\hat{\theta}$:
+\begin{equation}
+\tilde{V}_{i,t} = D_{i,t} - \hat{m}(X_{i,t}), \quad \alpha_{\text{DML}, i, t} = \hat{\theta} \cdot \tilde{V}_{i,t} \cdot \text{sgn}(\Delta_1 \mathbf{F}^{\text{Rates}})
+\end{equation}
+\textbf{Agent Prompts \& Invariants:} \textbf{(P1)} Block-temporal K-Fold cross-fitting harness. \textbf{(P2)} Neyman-orthogonal solver. \textbf{(P3)} PyTest: Residuals $\tilde{V}$ must correlate $<0.02$ with $X$.
+
+\subsubsection{Signal 20: ATS Level-2 Book Asymmetry ($\alpha_{\text{L2\_ASYM}}$)}
+\textbf{Microstructure \& Execution:} Distance-weighted Central Limit Order Book imbalances precede institutional sweep executions. \\
+\textbf{Data Contract \& Sanitization:} ATS Level 2 snapshots. Discard crossed markets. \\
+\textbf{Formulation:} Tier weight $w_k = 1 / |P^{\text{mid}} - P^k|$. Imbalance $\text{Imb} = (\text{WDepth}^{\text{bid}} - \text{WDepth}^{\text{ask}}) / (\text{Total} + 10^{-4})$.
+\begin{equation}
+\alpha_{\text{L2\_ASYM}, i, t} = \text{EMA}_3(\text{Imb}_{i}) - \text{EMA}_{15}(\text{Imb}_{i})
+\end{equation}
+\textbf{Agent Prompts \& Invariants:} \textbf{(P1)} CLOB depth ingestion. \textbf{(P2)} MACD-style EMA convergence. \textbf{(P3)} PyTest: Symmetric books yield exactly $0.0$.
+
+\newpage
+
+\section{Machine Learning Combination Layer: Monotonic GBDT}
+
+The signals are non-linear and conditional. We combine them using LightGBM with an asymmetric Huber loss to penalize overestimating returns on assets experiencing unmodeled liquidity drawdowns:
+\begin{equation}
+\mathcal{L}(y, \hat{y}) = (1 + \gamma \cdot \mathbb{I}_{\{y < \hat{y}\}}) \cdot \mathcal{L}_{\text{Huber}}(y, \hat{y}, \delta)
+\end{equation}
+To prevent microstructural overfitting, we enforce strict monotonic directional constraints on the theoretical features:
+\begin{lstlisting}[language=Python]
+import lightgbm as lgb
+monotone_constraints = [1, 1, -1, -1, -1, -1, -1, -1, -1, -1, 1, -1, -1, 1, -1, -1, 1, 0, 0, 1]
+params = {'objective': 'regression', 'metric': 'huber', 'monotone_constraints': monotone_constraints}
+\end{lstlisting}
+
+\section{Systematic Extension to Alpha Families}
+
+A generative mathematical grammar transforms the 20 prototypes into an exhaustive factor library via compositional operators: $\alpha^{(k)} = ( \mathcal{O}_{\text{norm}} \circ \mathcal{O}_{\text{spatial}} \circ \mathcal{O}_{\text{temp}} )(\mathcal{S})$.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabularx}{\textwidth}{llX}
+\toprule
+\textbf{Operator Class} & \textbf{Symbol} & \textbf{Mathematical Definition} \\
+\midrule
+Temporal Decay & $\mathcal{O}_{\text{temp}}^{\text{EMA}}(\tau)$ & Exponential moving average: $\sum \frac{2}{\tau+1}(1-\frac{2}{\tau+1})^k S_{t-k}$ \\
+Temporal Momentum & $\mathcal{O}_{\text{temp}}^{\Delta}(\tau)$ & Finite difference operator: $S_t - S_{t-\tau}$ \\
+Spatial Demeaning & $\mathcal{O}_{\text{spatial}}^{\text{Ind}}$ & Cross-sectional industry demeaning: $S_{i,t} - \frac{1}{|I|}\sum_{j} S_{j,t}$ \\
+Volatility Scaling & $\mathcal{O}_{\text{norm}}^{\text{Epps}}$ & Non-synchronous volatility scaling: $S_{i,t} / \sigma_{\text{Dimson}}(S_i)$ \\
+\bottomrule
+\end{tabularx}
+\caption{Primitive Transformational Operators}
+\end{table}
+
+\section{Empirical Model Fitting \& Optimizer Integration}
+
+\subsection{Purged and Embargoed CV}
+Standard cross-validation leaks information due to overlapping return horizons ($h=10$). We enforce a strict temporal topology:
+\begin{itemize}
+    \item \textbf{Purging:} Drop training samples where the label window overlaps with the test fold.
+    \item \textbf{Embargoing:} Enforce a 12-day blackout period following the test period.
+    \item \textbf{Group-KFold:} Force all bonds from a single parent issuer LEI into the same split.
+\end{itemize}
+
+\subsection{Optimization Objective}
+The forecasted residual return $\widehat{\mathbf{R}}_t^{\text{resid}}$ feeds a target weight optimizer bounded by market impact:
+\begin{equation}
+\mathbf{w}_t^* = \arg\max_{\mathbf{w}_t} \left\{ \mathbf{w}_t^\top \widehat{\mathbf{R}}_t^{\text{resid}} - \frac{\lambda}{2} \mathbf{w}_t^\top \bm{\Sigma}_t \mathbf{w}_t - \sum_{i=1}^{N} \mathcal{C}_{i,t}^{\text{eff}} \left| w_{i,t} - w_{i, t-1} \right| \right\}
+\end{equation}
+Subject to $\mathbf{KRD}_k^\top \mathbf{w}_t = 0$ (Duration Neutrality) and $\mathbf{DTS}^\top \mathbf{w}_t = 0$ (Spread Risk Neutrality).
+
+\section{Autonomous Agent Execution Algorithm}
+
+\begin{algorithm}[H]
+\SetAlgoLined
+\KwIn{Raw Market Feeds (TRACE, OPRA, Axes, PCF, Quotes)}
+\KwOut{Verified Feature Matrix $\mathbf{X}_t \in \mathbb{R}^{N \times 20}$}
+\textbf{Stage 1: Ingestion \& Cross-Asset Mapping}\;
+\For{each signal $k \in \{1, \dots, 20\}$}{
+    Execute Data Discovery contract\;
+    Enforce primary keys and time zone offsets (EST/UTC)\;
+}
+\textbf{Stage 2: Mathematical Engine \& Invariants}\;
+\For{each signal $k \in \{1, \dots, 20\}$}{
+    Compile vectorized kernel with zero-division $10^{-4}$ damping\;
+    Run PyTest suite asserting zero-bounds, sign directions, and edge-cases\;
+    \If{any test fails}{ Halt pipeline; trigger incremental prompt repair\;}
+}
+\textbf{Stage 3: Normalization \& Optimizer Hand-off}\;
+Construct Dimson residualized returns and clip feature matrix to $[-3.0, 3.0]$\;
+\caption{Incremental Agent Build Pipeline}
+\end{algorithm}
+
+\end{document}
