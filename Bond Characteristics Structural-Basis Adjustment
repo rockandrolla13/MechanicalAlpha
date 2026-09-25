@@ -1,0 +1,1294 @@
+The attachment links appear not to be opening correctly in your client. I won’t rely on them.
+
+I’ll put the technical specification directly into the chat so you can use it immediately. I’ll start from the exact question you were asking: **how to estimate the bond-characteristics adjustment \(C_{i,t}\), what its regression target is, and how it enters the final RV score.**
+
+# Bond Characteristics Structural-Basis Adjustment
+
+## 1. Objective
+
+You already have a **precomputed par-implied survival curve**. Importantly, that curve was constructed using all eligible bonds, including the target bond.
+
+For each bond \(i\) at date \(t\), the curve allows you to calculate how rich or cheap the bond appears relative to that fitted survival curve.
+
+Call this raw deviation
+
+\[
+\delta^{inc}_{i,t}.
+\]
+
+The superscript \(inc\) means **inclusive**: bond \(i\) participated in constructing the curve.
+
+We want to turn \(\delta^{inc}_{i,t}\) into a relative-value alpha.
+
+The problem is that some bonds **normally** trade rich or cheap to the curve because of their individual characteristics.
+
+For example:
+
+- small issue size;
+- subordinated debt;
+- callable structure;
+- old/off-the-run bond;
+- unusually high or low coupon;
+- low liquidity;
+- small amount outstanding.
+
+Therefore:
+
+\[
+\boxed{
+\text{observed curve deviation}
+=
+\text{normal structural basis}
++
+\text{abnormal RV dislocation}
++
+\text{noise}
+}
+\]
+
+Our objective is to estimate the first term and subtract it.
+
+---
+
+# 2. Final architecture
+
+The complete calculation will be:
+
+\[
+\boxed{
+\delta^{inc}_{i,t}
+\rightarrow
+B^{own}_{i,t}
+\rightarrow
+C_{i,t}
+\rightarrow
+B^{normal}_{i,t}
+\rightarrow
+D_{i,t}
+\rightarrow
+Z_{i,t}
+}
+\]
+
+where:
+
+\[
+\delta^{inc}_{i,t}
+=
+\text{current deviation from your survival curve},
+\]
+
+\[
+B^{own}_{i,t}
+=
+\text{bond's historically normal deviation},
+\]
+
+\[
+C_{i,t}
+=
+\text{normal deviation predicted from bond characteristics},
+\]
+
+\[
+B^{normal}_{i,t}
+=
+\text{best estimate of the bond's normal structural basis},
+\]
+
+\[
+D_{i,t}
+=
+\text{abnormal current dislocation},
+\]
+
+and
+
+\[
+Z_{i,t}
+=
+\text{standardized RV score}.
+\]
+
+The important point is:
+
+\[
+\boxed{C_{i,t}\text{ is NOT a return forecast.}}
+\]
+
+It is a **nuisance adjustment**.
+
+---
+
+# 3. Step 1 — Calculate the current inclusive curve deviation
+
+You already have the survival curve.
+
+For each bond, price it from the curve:
+
+\[
+P^{curve}_{i,t}.
+\]
+
+You also have the observed market price:
+
+\[
+P^{mkt}_{i,t}.
+\]
+
+The preferred definition of the deviation is the spread shift \(\delta\) required to reconcile the two.
+
+Solve:
+
+\[
+\boxed{
+P_i(Q_t,\delta^{inc}_{i,t})
+=
+P^{mkt}_{i,t}
+}
+\]
+
+where \(Q_t\) represents your survival curve.
+
+Use the sign convention
+
+\[
+\boxed{
+\delta^{inc}>0
+\quad\Longrightarrow\quad
+\text{bond is cheap/wide}
+}
+\]
+
+and
+
+\[
+\boxed{
+\delta^{inc}<0
+\quad\Longrightarrow\quad
+\text{bond is rich/tight}.
+}
+\]
+
+If exact repricing is inconvenient, the first-order approximation is
+
+\[
+\boxed{
+\delta^{inc}_{i,t}
+\approx
+\frac{
+P^{curve}_{i,t}-P^{mkt}_{i,t}
+}{
+CS01_{i,t}
+}
+}
+\]
+
+with \(CS01>0\).
+
+### Example
+
+Suppose:
+
+\[
+P^{curve}=101.00,
+\]
+
+\[
+P^{mkt}=100.40,
+\]
+
+and
+
+\[
+CS01=0.045.
+\]
+
+Then
+
+\[
+\delta^{inc}
+\approx
+\frac{0.60}{0.045}
+=
+13.33\text{ bp}.
+\]
+
+So the bond appears approximately 13.3 bp cheap.
+
+Store this every day:
+
+```text
+date
+bond_id
+curve_id
+market_price
+curve_price
+curve_basis_bp
+```
+
+where
+
+```text
+curve_basis_bp = delta_inc
+```
+
+---
+
+# 4. Step 2 — Estimate each seasoned bond's own normal basis
+
+A bond may systematically trade away from your survival curve.
+
+Therefore don't immediately call
+
+\[
+\delta^{inc}=+13
+\]
+
+a 13 bp alpha.
+
+Instead estimate where this particular bond normally sits.
+
+For each bond:
+
+\[
+\boxed{
+B^{own}_{i,t}
+=
+\operatorname{Median}
+\left\{
+\delta^{inc}_{i,u}:
+u\in[t-L,t-k]
+\right\}
+}
+\]
+
+A reasonable initial configuration is:
+
+\[
+L=120 \text{ trading days},
+\]
+
+\[
+k=5 \text{ trading days}.
+\]
+
+So at date \(t\), use approximately:
+
+\[
+t-120,\ldots,t-5.
+\]
+
+Do **not** use the latest five days in the baseline.
+
+Why?
+
+Because if the dislocation started yesterday, you don't want today's abnormal state immediately contaminating your estimate of “normal.”
+
+### Example
+
+Suppose the last 120-day history shows the bond normally trades approximately
+
+\[
++5\text{ bp}
+\]
+
+to the inclusive survival curve.
+
+Then:
+
+\[
+B^{own}_{i,t}=+5.
+\]
+
+If today:
+
+\[
+\delta^{inc}_{i,t}=+18,
+\]
+
+the abnormal move is not 18 bp.
+
+It is closer to
+
+\[
+18-5=13\text{ bp}.
+\]
+
+---
+
+# 5. This creates the target for the characteristics model
+
+This is the part that was unclear earlier.
+
+You need to build a **second regression** whose job is only to answer:
+
+> Given the characteristics of a bond, where would that type of bond normally trade relative to my survival curve?
+
+The regression target is:
+
+\[
+\boxed{
+Y^C_{i,t}
+=
+B^{own}_{i,t}.
+}
+\]
+
+That is the crucial definition.
+
+You are **not** predicting future return.
+
+You are **not** predicting today's \(\delta\).
+
+You are predicting the **historically persistent curve basis**.
+
+So each training observation looks like:
+
+\[
+\left(
+q_{i,t},
+B^{own}_{i,t}
+\right).
+\]
+
+---
+
+# 6. Step 3 — Build the training table
+
+For seasoned bonds only, construct something like:
+
+| bond | date | target \(B^{own}\) | log amount | age | coupon | seniority | callable | liquidity |
+|---|---|---:|---:|---:|---:|---|---|---:|
+| A | \(t_1\) | +6.2 | 20.5 | 3.1 | 4.75 | senior | no | 0.8 |
+| B | \(t_1\) | -1.4 | 19.7 | 8.2 | 3.10 | senior | no | 0.3 |
+| C | \(t_1\) | +11.1 | 18.9 | 11.3 | 7.25 | sub | yes | 0.2 |
+
+The dependent variable is:
+
+\[
+\boxed{Y=B^{own}}
+\]
+
+and the explanatory vector is:
+
+\[
+q_{i,t}.
+\]
+
+---
+
+# 7. What characteristics should initially enter \(q\)?
+
+Keep the first version simple.
+
+I would start with:
+
+\[
+q_{i,t}=
+\begin{bmatrix}
+\log(\text{amount outstanding})\\
+\text{age since issuance}\\
+\text{coupon}\\
+\text{remaining maturity}\\
+\text{seniority dummies}\\
+\text{callable dummy}\\
+\text{benchmark/on-the-run dummy}\\
+\text{slow liquidity measure}
+\end{bmatrix}.
+\]
+
+Potentially add:
+
+- original issue size;
+- number of TRACE observations over past 60 days;
+- median trade size;
+- slow historical bid/offer estimate;
+- secured/unsecured;
+- capital structure ranking.
+
+Do **not** initially put into this model:
+
+- today's bond return;
+- today's spread change;
+- CDS move;
+- equity move;
+- order flow;
+- RFQ imbalance;
+- dealer inventory;
+- ETF flow.
+
+Those are possible **alpha variables**.
+
+This model is not an alpha model.
+
+Its purpose is:
+
+\[
+\boxed{\text{remove predictable structural basis}.}
+\]
+
+---
+
+# 8. Important time alignment
+
+Suppose:
+
+\[
+B^{own}_{i,t}
+\]
+
+was calculated from the window
+
+\[
+[t-120,t-5].
+\]
+
+For a characteristic that changes over time, don't necessarily use its value exactly at \(t\).
+
+For example, liquidity.
+
+Prefer a value representative of the same historical period:
+
+\[
+Liquidity^{train}_{i,t}
+=
+\operatorname{Median}_{u\in[t-120,t-5]}
+Liquidity_{i,u}.
+\]
+
+Likewise for:
+
+- amount outstanding, if it changed;
+- age;
+- trading frequency;
+- bid/offer;
+- liquidity metrics.
+
+This prevents a subtle mismatch:
+
+\[
+\text{historical target}
+\]
+
+being explained using
+
+\[
+\text{future/current characteristics}.
+\]
+
+---
+
+# 9. Step 4 — Fit the characteristics regression
+
+Start with a simple robust linear model.
+
+Conceptually:
+
+\[
+\boxed{
+B^{own}_{i,t}
+=
+\gamma_0
++
+\gamma^\top q_{i,t}
++
+\eta_{i,t}.
+}
+\]
+
+Then:
+
+\[
+\boxed{
+C_{i,t}
+=
+\widehat\gamma_0+
+\widehat\gamma^\top q_{i,t}.
+}
+\]
+
+Interpretation:
+
+\[
+C_{i,t}=+6.5\text{ bp}
+\]
+
+means:
+
+> Bonds with these characteristics normally trade approximately 6.5 bp cheap to the fitted survival curve.
+
+It does **not** mean the bond will earn 6.5 bp.
+
+---
+
+# 10. Why ridge regression is a sensible first implementation
+
+Bond characteristics are correlated.
+
+For example:
+
+- issue size and liquidity;
+- age and benchmark status;
+- age and trading frequency;
+- tenor and coupon structure.
+
+Therefore use ridge regression:
+
+\[
+\boxed{
+\widehat\gamma
+=
+\arg\min_\gamma
+\sum_n
+w_n
+\left(
+Y_n-\gamma_0-q_n^\top\gamma
+\right)^2
++
+\lambda\|\gamma\|_2^2.
+}
+\]
+
+I would initially leave the intercept unpenalized.
+
+Use chronological validation to choose \(\lambda\).
+
+Do **not** choose \(\lambda\) from the final test sample.
+
+---
+
+# 11. Better still: robust regression
+
+Some historical bond bases will be contaminated by:
+
+- credit events;
+- stale prices;
+- temporary dislocations;
+- bad data;
+- corporate actions.
+
+Therefore a Huber loss is attractive:
+
+\[
+\boxed{
+\widehat\gamma
+=
+\arg\min_\gamma
+\sum_n
+w_n
+\rho_\kappa
+\left(
+Y_n-\gamma_0-q_n^\top\gamma
+\right)
++
+\lambda\|\gamma\|_2^2.
+}
+\]
+
+where
+
+\[
+\rho_\kappa(r)
+=
+\begin{cases}
+\frac12r^2,&|r|\leq\kappa,\\
+\kappa|r|-\frac12\kappa^2,&|r|>\kappa.
+\end{cases}
+\]
+
+That prevents a few pathological observations from controlling the characteristics coefficients.
+
+However, a standard ridge regression is perfectly acceptable for the first implementation.
+
+---
+
+# 12. Why do we need \(C\) if we already have \(B^{own}\)?
+
+Because \(B^{own}\) is excellent for old bonds and poor for new bonds.
+
+Imagine:
+
+### Bond A
+
+Has:
+
+\[
+n=400
+\]
+
+historical observations.
+
+Its own history is probably highly informative.
+
+### Bond B
+
+Was issued 8 days ago.
+
+It has:
+
+\[
+n=8.
+\]
+
+Its historical median is unreliable.
+
+But the characteristics model can say:
+
+> Other bonds with comparable size, coupon, liquidity, seniority and age normally trade +4 bp to this type of curve.
+
+That is exactly what \(C\) provides.
+
+---
+
+# 13. Step 5 — Combine own history and the characteristics estimate
+
+Do not mechanically choose one or the other.
+
+Blend them.
+
+The simple version is:
+
+\[
+\boxed{
+B^{normal}_{i,t}
+=
+w_{i,t}B^{own}_{i,t}
++
+(1-w_{i,t})C_{i,t}.
+}
+\]
+
+A simple weight is:
+
+\[
+\boxed{
+w_{i,t}
+=
+\frac{n_{i,t}}
+{n_{i,t}+\lambda_B}.
+}
+\]
+
+For example:
+
+\[
+\lambda_B=40.
+\]
+
+If a new bond has
+
+\[
+n=5,
+\]
+
+then
+
+\[
+w=\frac{5}{45}=0.111.
+\]
+
+So:
+
+\[
+B^{normal}
+=
+0.111B^{own}
++
+0.889C.
+\]
+
+The characteristics estimate dominates.
+
+If:
+
+\[
+n=200,
+\]
+
+then
+
+\[
+w=\frac{200}{240}=0.833.
+\]
+
+The bond's own history dominates.
+
+---
+
+# 14. A better blending method
+
+Observation count alone isn't ideal.
+
+Ultimately you want to know the uncertainty of each estimator.
+
+Suppose:
+
+\[
+B^{own}_{i,t}
+\]
+
+has estimation variance
+
+\[
+V^{own}_{i,t},
+\]
+
+while the characteristics estimate has prediction-error variance
+
+\[
+V^C_{i,t}.
+\]
+
+Then use inverse-variance weighting:
+
+\[
+\boxed{
+B^{normal}_{i,t}
+=
+\frac{
+B^{own}_{i,t}/V^{own}_{i,t}
++
+C_{i,t}/V^C_{i,t}
+}{
+1/V^{own}_{i,t}+1/V^C_{i,t}
+}.
+}
+\]
+
+Equivalently:
+
+\[
+B^{normal}
+=
+wB^{own}
++
+(1-w)C
+\]
+
+with
+
+\[
+\boxed{
+w=
+\frac{V^C}
+{V^{own}+V^C}.
+}
+\]
+
+If own-history uncertainty is small, its weight approaches 1.
+
+If own-history uncertainty is enormous, the characteristics model dominates.
+
+This is what I would eventually use.
+
+For the first implementation, however:
+
+\[
+w=\frac{n}{n+\lambda}
+\]
+
+is much simpler and easier to debug.
+
+---
+
+# 15. Step 6 — Calculate the abnormal RV dislocation
+
+Now you finally subtract the normal structural basis:
+
+\[
+\boxed{
+D_{i,t}
+=
+\delta^{inc}_{i,t}
+-
+B^{normal}_{i,t}.
+}
+\]
+
+This is the economically important quantity.
+
+Interpretation:
+
+\[
+D>0
+\]
+
+means unusually cheap.
+
+\[
+D<0
+\]
+
+means unusually rich.
+
+---
+
+# 16. Worked example
+
+Suppose today:
+
+\[
+\delta^{inc}_{i,t}=+21\text{ bp}.
+\]
+
+The bond's own historical median is:
+
+\[
+B^{own}=+8\text{ bp}.
+\]
+
+The bond characteristics model predicts:
+
+\[
+C=+5\text{ bp}.
+\]
+
+Suppose the bond has:
+
+\[
+n=80
+\]
+
+history observations and
+
+\[
+\lambda_B=40.
+\]
+
+Then:
+
+\[
+w
+=
+\frac{80}{80+40}
+=
+0.667.
+\]
+
+Therefore:
+
+\[
+B^{normal}
+=
+0.667(8)+0.333(5).
+\]
+
+So:
+
+\[
+B^{normal}
+=
+5.336+1.665
+\approx7.0\text{ bp}.
+\]
+
+Therefore the abnormal dislocation is:
+
+\[
+\boxed{
+D
+=
+21-7
+=
+14\text{ bp}.
+}
+\]
+
+So although the raw curve says the bond is 21 bp cheap, about 7 bp is normal for this type of bond.
+
+The alpha-relevant dislocation is closer to 14 bp.
+
+---
+
+# 17. Step 7 — Normalize the dislocation
+
+A 14 bp deviation doesn't mean the same thing for every bond.
+
+For one IG bond, 14 bp may be enormous.
+
+For an illiquid HY bond, it may be ordinary.
+
+Therefore estimate the historical variability of the adjusted residual.
+
+Define historical:
+
+\[
+D_{i,u}
+=
+\delta^{inc}_{i,u}
+-
+B^{normal}_{i,u}.
+\]
+
+Then calculate:
+
+\[
+\boxed{
+S_{i,t}
+=
+1.4826
+\operatorname{Median}_{u\in[t-L_S,t-k]}
+\left|
+D_{i,u}
+-
+\operatorname{Median}(D)
+\right|.
+}
+\]
+
+Then the final score is:
+
+\[
+\boxed{
+Z_{i,t}
+=
+\frac{D_{i,t}}
+{S_{i,t}+\epsilon}.
+}
+\]
+
+If:
+
+\[
+D=14\text{ bp}
+\]
+
+and
+
+\[
+S=6\text{ bp},
+\]
+
+then:
+
+\[
+Z=\frac{14}{6}=2.33.
+\]
+
+Interpretation:
+
+> The bond is approximately 2.3 normal residual-volatility units cheaper than usual after correcting for its structural characteristics.
+
+---
+
+# 18. Full final score
+
+Written compactly:
+
+\[
+\boxed{
+Z_{i,t}
+=
+\frac{
+\delta^{inc}_{i,t}
+-
+\left[
+w_{i,t}B^{own}_{i,t}
++
+(1-w_{i,t})C_{i,t}
+\right]
+}{
+S_{i,t}+\epsilon
+}
+}
+\]
+
+where
+
+\[
+C_{i,t}
+=
+\widehat m(q_{i,t}),
+\]
+
+and the characteristics model was trained using
+
+\[
+\boxed{
+Y^C_{i,t}=B^{own}_{i,t}.
+}
+\]
+
+That last equation is the one to remember.
+
+---
+
+# 19. Complete algorithm
+
+A production implementation can be written as:
+
+```text
+FOR every historical date t:
+
+    1. Load precomputed survival curve.
+
+    2. For every eligible bond i:
+           compute observed market price P_mkt
+           compute survival-curve price P_curve
+
+    3. Compute inclusive curve deviation:
+           delta_inc[i,t]
+
+    4. Store delta_inc permanently.
+```
+
+After enough history exists:
+
+```text
+FOR each bond-date (i,t):
+
+    5. Select historical window:
+           [t-L, t-k]
+
+    6. Compute:
+           B_own[i,t] = rolling median(delta_inc)
+
+    7. Compute:
+           n_history[i,t]
+
+    8. Build bond characteristic vector q[i,t].
+```
+
+Now construct the characteristics-model training dataset:
+
+```text
+X = q[i,t]
+
+Y = B_own[i,t]
+```
+
+Then:
+
+```text
+9. Split chronologically into train / validation / test.
+
+10. Standardize continuous characteristics using training data only.
+
+11. One-hot encode categorical characteristics.
+
+12. Fit ridge or Huber-ridge regression:
+
+        B_own = gamma_0 + gamma' q + error
+
+13. Choose regularization parameter on validation period.
+
+14. Freeze model.
+
+15. Predict:
+
+        C[i,t] = gamma_0 + gamma' q[i,t]
+```
+
+Then production scoring:
+
+```text
+16. Calculate own-history weight:
+
+        w = n / (n + lambda_B)
+
+17. Calculate normal basis:
+
+        B_normal = w * B_own + (1-w) * C
+
+18. Calculate abnormal dislocation:
+
+        D = delta_inc - B_normal
+
+19. Calculate historical robust scale S.
+
+20. Calculate:
+
+        Z = D / S
+```
+
+Output:
+
+```text
+bond_id
+date
+delta_inc
+B_own
+C
+w
+B_normal
+D
+S
+Z
+```
+
+I would store **every intermediate field** rather than outputting only \(Z\). That makes the system auditable.
+
+---
+
+# 20. Essential validation checks
+
+Before using the signal, verify several identities manually.
+
+For seasoned bonds:
+
+\[
+w\rightarrow1
+\]
+
+as history becomes large.
+
+For newly issued bonds:
+
+\[
+w\rightarrow0.
+\]
+
+Therefore:
+
+\[
+B^{normal}\rightarrow C
+\]
+
+for new bonds, while
+
+\[
+B^{normal}\rightarrow B^{own}
+\]
+
+for seasoned bonds.
+
+Also verify:
+
+\[
+\delta^{inc}=B^{normal}
+\quad\Longrightarrow\quad
+D=0
+\]
+
+and hence
+
+\[
+Z=0.
+\]
+
+Check sign symmetry:
+
+If
+
+\[
+D=+10
+\]
+
+then cheap score should be positive.
+
+If
+
+\[
+D=-10
+\]
+
+then rich score should be negative.
+
+---
+
+# 21. A very important restriction
+
+The characteristics regression must **not learn the temporary alpha away**.
+
+That is why I strongly prefer:
+
+\[
+\boxed{
+Y^C=B^{own}
+}
+\]
+
+instead of:
+
+\[
+Y^C=\delta^{inc}_{today}.
+\]
+
+Using today's deviation directly makes it much easier for the characteristics model to explain transient dislocations.
+
+The intended decomposition is:
+
+\[
+\boxed{
+\delta^{inc}
+=
+\underbrace{\text{persistent basis}}_{C/B^{normal}}
++
+\underbrace{\text{temporary RV component}}_D
++
+noise.
+}
+\]
+
+You want the regression to learn only the first component.
+
+---
+
+# 22. The implementation I would start with
+
+For a first production-quality prototype, I would use:
+
+\[
+L=120,
+\qquad
+k=5,
+\]
+
+median for \(B^{own}\),
+
+ridge regression for \(C\),
+
+\[
+w=\frac{n}{n+40},
+\]
+
+and MAD for \(S\).
+
+In other words:
+
+\[
+\boxed{
+B^{own}
+=
+Median_{120d,\ lag5}(\delta)
+}
+\]
+
+\[
+\boxed{
+C
+=
+Ridge(q\rightarrow B^{own})
+}
+\]
+
+\[
+\boxed{
+B^{normal}
+=
+\frac{n}{n+40}B^{own}
++
+\frac{40}{n+40}C
+}
+\]
+
+\[
+\boxed{
+D
+=
+\delta-B^{normal}
+}
+\]
+
+\[
+\boxed{
+Z
+=
+\frac{D}{1.4826\,MAD(D)}
+}
+\]
+
+That is the version I would implement **before adding any sophistication**.
+
+It is simple, inspectable, and each intermediate quantity has a clear economic interpretation.
